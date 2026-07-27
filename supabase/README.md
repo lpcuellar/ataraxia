@@ -31,8 +31,8 @@ para siempre, aunque después se "corrija" en un commit posterior. Por eso ese p
    ningún archivo de este repo.
 
 3. **Conectar GitHub** (Project Settings → Integrations → Authorize GitHub), eligiendo este
-   repositorio. En **Working directory**, poner `ataraxia` (porque `supabase/` vive en
-   `ataraxia/supabase/`, no en la raíz del repo).
+   repositorio. En **Working directory**, poner `.` (el repo tiene como raíz esta misma
+   carpeta `ataraxia/`, así que `supabase/` ya está en la raíz del repo).
 
 4. **Activar "Deploy to production"** en la configuración de la integración. Con eso, el
    siguiente push/merge a `main` corre `supabase/migrations/20260726202011_initial_schema.sql`

@@ -12,7 +12,7 @@ El LLM propone, el código decide. Todos los guardrails se validan en `src/guard
 antes de que cualquier orden llegue al broker. Ver `BUILD_PLAN.md` para el razonamiento
 completo.
 
-## Setup rápido (Fase 0)
+## Setup rápido
 
 ```bash
 python3 -m venv venv
@@ -21,27 +21,38 @@ pip install -r requirements.txt
 cp .env.example .env  # y llenar con tus API keys reales
 ```
 
+Base de datos (Supabase/Postgres) — ver `supabase/README.md` para el setup paso a paso
+(crear el rol `ataraxia_brain`, conectar el repo, activar el despliegue de migraciones).
+
 Después:
 1. Verificar que la cuenta de paper trading de IBKR esté abierta
-2. Correr el Client Portal Gateway localmente (ver docs de IBeam/ibind)
-3. Confirmar conexión: `python scripts/run_daily.py --dry-run`
+2. Correr el Client Portal Gateway localmente (ver docs de IBeam/ibind) — solo necesario
+   desde Fase 5 (ejecución automatizada); durante paper trading la ejecución es manual
+3. Confirmar el pipeline de datos: `python scripts/smoke_test_fmp.py`
 
 ## Estado actual
-Scaffold inicial — Fase 0/1 del `BUILD_PLAN.md`. Sin lógica de negocio implementada todavía;
-los módulos en `src/` tienen stubs con la responsabilidad de cada uno documentada.
+- **Fase 1 (datos) completa:** cliente FMP, precios/benchmark, embudo de candidatos de dos
+  etapas, caché en disco.
+- **Fase 3 (DB) implementada:** schema en `supabase/migrations/`, `src/db/models.py`
+  conectado vía `psycopg2`, `RotationState` migrado a la tabla `universe_state`.
+- **Pendiente:** `src/guardrails/validator.py` (validación determinista de guardrails).
 
 ## Estructura
 ```
 ataraxia/
 ├── config/
-│   └── universe.yaml      # pool de candidatos (filtro cuantitativo + rotación)
+│   └── universe.yaml       # pool de candidatos (filtro cuantitativo + rotación)
+├── supabase/
+│   ├── config.toml
+│   ├── README.md            # setup de la base de datos
+│   └── migrations/          # schema versionado, desplegado vía integración de GitHub
 ├── src/
-│   ├── agent/              # prompt, tools, loop de orquestación
-│   ├── guardrails/          # validación determinista, no negociable
-│   ├── data/                 # fundamentales + mercado
-│   ├── broker/                # wrapper sobre IBKR Client Portal API
-│   └── db/                     # schema y modelos (SQLite)
+│   ├── agent/                # prompt — la orquestación la hace esta sesión de Cowork
+│   ├── guardrails/            # validación determinista, no negociable
+│   ├── data/                   # fundamentales, mercado, embudo de candidatos
+│   ├── broker/                  # wrapper sobre IBKR Client Portal API (Fase 5+)
+│   └── db/                       # acceso a Supabase/Postgres (psycopg2)
 ├── dashboard/
 └── scripts/
-    └── run_daily.py         # entry point del scheduler
+    └── run_daily.py            # helpers que el brain invoca por bash
 ```

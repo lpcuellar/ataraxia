@@ -1,0 +1,44 @@
+# Ataraxia — executor + IBKR Client Portal Gateway, aislados en contenedores.
+#
+# Servicios:
+#   ibeam    — mantiene el Client Portal Gateway autenticado (cuenta PAPER: sin 2FA, por eso
+#              la automatizacion total es viable en esta fase). Imagen: voyz/ibeam.
+#   executor — corre el ciclo de ejecucion de Ataraxia contra el gateway.
+#
+# Uso (desde la raiz de ataraxia/):
+#   docker compose -f docker/docker-compose.yml --env-file .env up -d ibeam
+#   docker compose -f docker/docker-compose.yml --env-file .env run --rm executor
+#
+# El executor NO es un daemon: se invoca una vez por corrida. Agendarlo en el host, p.ej.
+# launchd/cron a las horas de mercado deseadas.
+#
+# Kill switch: `touch data/KILL_SWITCH` en el host (el volumen lo comparte) detiene toda
+# ejecucion sin tumbar contenedores.
+
+services:
+  ibeam:
+    image: voyz/ibeam:latest
+    container_name: ataraxia-ibeam
+    environment:
+      IBEAM_ACCOUNT: ${IBKR_PAPER_USERNAME}
+      IBEAM_PASSWORD: ${IBKR_PAPER_PASSWORD}
+    ports:
+      - "127.0.0.1:5000:5000"   # solo loopback — el gateway jamas se expone a la red
+    restart: unless-stopped
+
+  executor:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.executor
+    container_name: ataraxia-executor
+    env_file:
+      - ../.env
+    environment:
+      # El executor usa SU rol de DB, no el del brain — mismo codigo, credencial distinta.
+      SUPABASE_DB_USER: ${EXECUTOR_DB_USER}
+      SUPABASE_DB_PASSWORD: ${EXECUTOR_DB_PASSWORD}
+      IBEAM_GATEWAY_URL: https://ibeam:5000
+    volumes:
+      - ../data:/app/data     # comparte cache, pending_db_writes y KILL_SWITCH con el host
+    depends_on:
+      - ibeam

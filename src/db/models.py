@@ -79,6 +79,12 @@ def flush_pending_writes() -> int:
                 _upsert_performance(payload)
             elif kind == "universe_state":
                 _update_universe_state(payload)
+            elif kind == "proposal":
+                _execute(_INSERT_PROPOSAL, payload)
+            elif kind == "fill":
+                _execute(_INSERT_FILL, payload)
+            elif kind == "cash_event":
+                _execute(_INSERT_CASH_EVENT, payload)
             else:
                 continue
             path.unlink()
@@ -260,3 +266,177 @@ def save_universe_state(
             f"AVISO: fallo al escribir 'universe_state' en Supabase ({e}). "
             f"Guardado en {PENDING_WRITES_DIR} para reintentar con flush_pending_writes()."
         )
+
+
+# ---------------------------------------------------------------------------
+# Estado de cuenta derivado (brain-side, solo lectura)
+#
+# La verdad sobre la cuenta vive en executed_trades + cash_events (escritas solo por el
+# executor). El brain arma su vision del portafolio DERIVANDOLA de esas tablas — nunca la
+# asevera. Nota: models.py sirve a ambos roles; cual rol se usa depende de SUPABASE_DB_USER
+# en el entorno (el brain corre con ataraxia_brain, el executor con ataraxia_executor).
+# ---------------------------------------------------------------------------
+
+def get_account_state() -> dict:
+    """Deriva el estado real de la cuenta desde executed_trades + cash_events.
+
+    Devuelve: {
+        "holdings": {ticker: {"quantity": float, "avg_cost": float}},   # posiciones abiertas
+        "cash": float,
+        "todays_trades": [{"ticker": str, "action": str}],              # fills de HOY
+    }
+    El caller le agrega precios actuales (FMP) para construir el PortfolioState del validator.
+    avg_cost usa costo promedio simple de los fills de compra (se recalcula al comprar; una
+    venta no cambia el avg_cost de lo que queda).
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("select date, ticker, action, quantity, price from executed_trades order by id")
+            fills = [dict(r) for r in cur.fetchall()]
+            cur.execute("select coalesce(sum(amount), 0) as total from cash_events")
+            cash = float(cur.fetchone()["total"])
+    finally:
+        conn.close()
+
+    holdings: dict[str, dict] = {}
+    todays_trades = []
+    from datetime import date as _date
+    today = _date.today()
+
+    for f in fills:
+        qty, price = float(f["quantity"]), float(f["price"])
+        t = f["ticker"]
+        if f["action"] == "buy":
+            cash -= qty * price
+            if t not in holdings:
+                holdings[t] = {"quantity": 0.0, "avg_cost": 0.0}
+            h = holdings[t]
+            total_cost = h["quantity"] * h["avg_cost"] + qty * price
+            h["quantity"] += qty
+            h["avg_cost"] = total_cost / h["quantity"]
+        else:  # sell
+            cash += qty * price
+            if t in holdings:
+                holdings[t]["quantity"] -= qty
+                if holdings[t]["quantity"] <= 1e-9:
+                    del holdings[t]
+        if f["date"] == today:
+            todays_trades.append({"ticker": t, "action": f["action"]})
+
+    return {"holdings": holdings, "cash": cash, "todays_trades": todays_trades}
+
+
+def get_flagged_tickers() -> set:
+    """Tickers actualmente bajo revision obligatoria de tesis: su ultimo evento de tesis en
+    decisions es un 'thesis_flag' sin 'thesis_resolution' posterior."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                select distinct on (ticker) ticker, entry_type
+                from decisions
+                where entry_type in ('thesis_flag', 'thesis_resolution')
+                order by ticker, id desc
+                """
+            )
+            return {row[0] for row in cur.fetchall() if row[1] == "thesis_flag"}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Handoff brain -> executor
+# ---------------------------------------------------------------------------
+
+_INSERT_PROPOSAL = """
+insert into decisions (
+    date, ticker, entry_type, action, quantity, price, rationale, bear_case,
+    bear_case_probability, guardrail_result, guardrail_rejection_reason, execution_status
+) values (
+    %(date)s, %(ticker)s, 'trade', %(action)s, %(quantity)s, %(price)s,
+    %(rationale)s, %(bear_case)s, %(bear_case_probability)s, %(guardrail_result)s,
+    %(guardrail_rejection_reason)s, %(execution_status)s
+)
+"""
+
+
+def log_trade_proposal(
+    date: str,
+    ticker: str,
+    action: str,
+    quantity: float,
+    price: float,
+    rationale: str,
+    guardrail_result: str,
+    bear_case: str | None = None,
+    bear_case_probability: float | None = None,
+    guardrail_rejection_reason: str | None = None,
+) -> None:
+    """Como log_decision, pero para propuestas ejecutables: si el guardrail del brain la
+    aprobo, queda 'pending' para que el executor la recoja (y re-valide por su cuenta).
+    Propuestas rechazadas quedan con execution_status='skipped' — registradas para el
+    historial, nunca ejecutables."""
+    payload = dict(
+        date=date, ticker=ticker, action=action, quantity=quantity, price=price,
+        rationale=rationale, bear_case=bear_case, bear_case_probability=bear_case_probability,
+        guardrail_result=guardrail_result, guardrail_rejection_reason=guardrail_rejection_reason,
+        execution_status="pending" if guardrail_result == "approved" else "skipped",
+    )
+    _write_with_fallback("proposal", _INSERT_PROPOSAL, payload)
+
+
+def get_pending_proposals() -> list[dict]:
+    """Executor-side: propuestas aprobadas por el brain que esperan ejecucion."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "select id, date, ticker, action, quantity, price, rationale "
+                "from decisions where execution_status = 'pending' order by id"
+            )
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def mark_execution_status(decision_id: int, status: str, note: str | None = None) -> None:
+    """Executor-side: cierra el ciclo de una propuesta ('executed' | 'failed' | 'skipped')."""
+    _execute(
+        "update decisions set execution_status = %(status)s, execution_note = %(note)s "
+        "where id = %(id)s",
+        {"id": decision_id, "status": status, "note": note},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Registro de fills y cash (executor-side — el rol ataraxia_brain no tiene INSERT aqui)
+# ---------------------------------------------------------------------------
+
+_INSERT_FILL = """
+insert into executed_trades (date, ticker, action, quantity, price, decision_id)
+values (%(date)s, %(ticker)s, %(action)s, %(quantity)s, %(price)s, %(decision_id)s)
+"""
+
+
+def record_fill(
+    date: str, ticker: str, action: str, quantity: float, price: float,
+    decision_id: int | None = None,
+) -> None:
+    payload = dict(
+        date=date, ticker=ticker, action=action, quantity=quantity, price=price,
+        decision_id=decision_id,
+    )
+    _write_with_fallback("fill", _INSERT_FILL, payload)
+
+
+_INSERT_CASH_EVENT = """
+insert into cash_events (date, event_type, amount, note)
+values (%(date)s, %(event_type)s, %(amount)s, %(note)s)
+"""
+
+
+def record_cash_event(date: str, event_type: str, amount: float, note: str | None = None) -> None:
+    payload = dict(date=date, event_type=event_type, amount=amount, note=note)
+    _write_with_fallback("cash_event", _INSERT_CASH_EVENT, payload)

@@ -1,0 +1,8 @@
+-- Este archivo ya no es la fuente de verdad del schema.
+--
+-- El schema de Ataraxia ahora vive bajo control de versiones en:
+--   ataraxia/supabase/migrations/   (una migración por cambio, aplicada vía la integración
+--                                     de GitHub de Supabase — ver ataraxia/supabase/README.md)
+--
+-- Se deja este archivo como puntero para que nadie edite el schema aquí por costumbre y
+-- termine con dos versiones desincronizadas.

@@ -1,0 +1,20 @@
+# Universo de candidatos de Ataraxia — embudo de dos etapas (ver BUILD_PLAN.md)
+#
+# Etapa 1 (filtro cuantitativo, sin juicio humano): se genera programáticamente a partir de
+# los constituyentes del S&P 500 aplicando cortes objetivos. No se edita a mano este archivo
+# para "elegir favoritos" — el pool completo se regenera por código en src/data/.
+#
+# Etapa 2 (lote rotativo): cada semana se selecciona un subconjunto del pool para research
+# profundo. El estado de qué se ha revisado y cuándo vive en la base de datos, no aquí.
+
+filtros_cuantitativos:
+  market_cap_minimo_usd: 10000000000   # $10B — evita micro/small caps ilíquidas
+  cobertura_analistas_minima: 5        # al menos 5 analistas cubriendo el ticker
+  indice_base: "S&P 500"               # fuente del universo elegible
+
+lote_rotativo:
+  tickers_nuevos_por_semana: 18
+  revision_diaria_de_holdings_actuales: true   # siempre, independiente del lote rotativo
+
+# Placeholder — se genera y actualiza por código, no manualmente:
+pool_filtrado: []

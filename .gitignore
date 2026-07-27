@@ -1,0 +1,8 @@
+.env
+venv/
+__pycache__/
+*.pyc
+logs/*.log
+data/cache/
+data/rotation_state.json
+data/pending_db_writes/

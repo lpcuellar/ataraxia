@@ -1,0 +1,11 @@
+# Config minimo de Supabase CLI — solo lo necesario para que la integracion de GitHub
+# reconozca esta carpeta como un proyecto de Supabase y despliegue supabase/migrations/.
+#
+# project_id es el unico campo que el CLI marca como requerido (por defecto toma el nombre
+# de la carpeta al correr `supabase init`). Si mas adelante quieres correr Supabase
+# localmente (`supabase start`, con Docker) o usar Auth/Storage/Edge Functions, corre
+# `npx supabase init` en esta carpeta para regenerar un config.toml completo con todas las
+# secciones ([api], [db], [studio], etc.) — no las inventamos aqui para evitar dejar valores
+# incorrectos o desactualizados respecto a la version del CLI que termines usando.
+
+project_id = "ataraxia"

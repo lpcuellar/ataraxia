@@ -21,9 +21,8 @@ executor no ejecuta nada y avisa. Para frenar el sistema: `touch data/KILL_SWITC
 Esto es para fallas operacionales (bug, gateway en loop, datos corruptos) — no para
 desacuerdos con el criterio del agente, que invalidarian el experimento.
 
-Estado: la integracion con IBKR (_execute_on_ibkr) es un stub hasta tener el Gateway
-corriendo (ver docker/). Todo lo demas — polling, re-validacion, registro, notificacion —
-es funcional y testeable sin broker.
+Requiere el Gateway de IBKR corriendo y autenticado (contenedor IBeam, ver docker/).
+`--dry-run` prueba todo el ciclo excepto la orden real.
 """
 
 import sys
@@ -67,12 +66,33 @@ def build_portfolio_state() -> v.PortfolioState:
 
 def _execute_on_ibkr(proposal: dict) -> dict:
     """Ejecuta la orden contra la cuenta paper de IBKR via Client Portal Gateway.
+    Devuelve {"filled": bool, "fill_price": float, "fill_quantity": float, ...}."""
+    import os
 
-    STUB — se implementa cuando el Gateway este corriendo (src/broker/ibkr_client.py).
-    Debe devolver: {"filled": bool, "fill_price": float, "fill_quantity": float}
-    """
-    raise NotImplementedError(
-        "Integracion IBKR pendiente — ver src/broker/ibkr_client.py y docker/README.md"
+    from src.broker.ibkr_client import IBKRClient, IBKRError
+
+    client = IBKRClient()
+    if not client.is_authenticated():
+        raise IBKRError(
+            "El gateway de IBKR no esta autenticado — revisar el contenedor de IBeam "
+            "(docker compose logs ibeam)"
+        )
+
+    # Guardrail de fase: mientras IBKR_PAPER_TRADING=true, negarse a operar contra una
+    # cuenta que no sea paper (las cuentas paper de IBKR empiezan con "DU"). Esto hace
+    # estructuralmente imposible que un .env mal configurado toque una cuenta real.
+    account_id = client.get_account_id()
+    paper_mode = os.getenv("IBKR_PAPER_TRADING", "true").lower() == "true"
+    if paper_mode and not account_id.startswith("DU"):
+        raise IBKRError(
+            f"IBKR_PAPER_TRADING=true pero la cuenta {account_id} no parece paper (no "
+            f"empieza con DU) — ejecucion abortada"
+        )
+
+    return client.place_market_order(
+        ticker=proposal["ticker"],
+        action=proposal["action"],
+        quantity=float(proposal["quantity"]),
     )
 
 
@@ -98,16 +118,13 @@ def process_proposal(proposal: dict, dry_run: bool = False) -> str:
 
     try:
         fill = _execute_on_ibkr(proposal)
-    except NotImplementedError:
-        db.mark_execution_status(pid, "failed", "integracion IBKR no implementada todavia")
-        return f"FAIL {ticker} — IBKR no integrado todavia (propuesta marcada 'failed')"
     except Exception as e:
         db.mark_execution_status(pid, "failed", f"error de ejecucion: {e}")
         return f"FAIL {ticker} — {e}"
 
     if not fill["filled"]:
-        db.mark_execution_status(pid, "failed", "orden no ejecutada (no fill)")
-        return f"FAIL {ticker} — orden sin fill"
+        db.mark_execution_status(pid, "failed", f"orden sin fill ({fill.get('status', '?')})")
+        return f"FAIL {ticker} — orden sin fill ({fill.get('status', '?')})"
 
     today = date.today().isoformat()
     db.record_fill(

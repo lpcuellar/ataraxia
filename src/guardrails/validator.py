@@ -12,7 +12,8 @@ validacion debe poder correr dos veces — una vez en el brain (Cowork) y otra v
 executor, sin depender de que compartan conexion a DB ni estado mutable.
 
 Guardrails implementados aqui (fuente de verdad: PROJECT_PLAN.md Seccion 1):
-  - Maximo 15% de posicion individual al costo               -> validate_trade_proposal (hard)
+  - Maximo 15% de posicion individual al costo (cost basis, no valor de mercado — ver
+    Position.cost_basis / PortfolioState.total_cost_basis) -> validate_trade_proposal (hard)
   - Sin operaciones intradia (mismo ticker, compra y venta)   -> validate_trade_proposal (hard)
   - Cartera objetivo de 8-12 posiciones                       -> validate_trade_proposal (max
     es hard — no se abre una posicion #13; el minimo de 8 es un warning, no bloquea ventas
@@ -20,9 +21,13 @@ Guardrails implementados aqui (fuente de verdad: PROJECT_PLAN.md Seccion 1):
   - Universo restringido a acciones (sin crypto, sin prediction markets) -> validate_trade_proposal (hard)
   - Suficiencia de cash (implicito, no listado explicitamente en PROJECT_PLAN.md pero
     obviamente necesario) -> validate_trade_proposal (hard)
-  - Trigger de revision obligatoria a -20% desde costo        -> check_thesis_review_triggers
-    (NO bloquea la propuesta en si — flaguea la posicion. Una vez flaggeada, no se le puede
-    agregar mas hasta resolver la revision — eso si lo bloquea validate_trade_proposal)
+  - Bear case + probabilidad estimada obligatorios en toda propuesta -> validate_trade_proposal
+    (hard — sin esto no hay forma de que el guardrail sepa si el analisis es real)
+  - Trigger de revision obligatoria a -20% desde costo: se autocalcula EN VIVO dentro de
+    validate_trade_proposal contra unrealized_return_pct de la posicion existente (no depende
+    de que algo haya escrito un flag en la DB primero — se resuelve solo si el precio se
+    recupera). check_thesis_review_triggers() sigue disponible como el chequeo diario no
+    bloqueante que reporta todas las posiciones flaggeadas, no solo la que se esta comprando.
   - Kill-switch de drawdown: desactivado durante paper trading -> check_drawdown_kill_switch
     (DRAWDOWN_KILL_SWITCH_PCT = None mientras estemos en paper; se activa en Fase 6)
 
@@ -58,6 +63,10 @@ class Position:
         return self.quantity * self.current_price
 
     @property
+    def cost_basis(self) -> float:
+        return self.quantity * self.avg_cost
+
+    @property
     def unrealized_return_pct(self) -> float:
         if self.avg_cost == 0:
             return 0.0
@@ -79,6 +88,10 @@ class PortfolioState:
     def total_value(self) -> float:
         return self.cash + sum(p.current_value for p in self.positions)
 
+    @property
+    def total_cost_basis(self) -> float:
+        return self.cash + sum(p.cost_basis for p in self.positions)
+
     def get_position(self, ticker: str) -> Position | None:
         for p in self.positions:
             if p.ticker == ticker:
@@ -92,6 +105,11 @@ class TradeProposal:
     action: str  # "buy" | "sell"
     quantity: float
     price: float
+    # Obligatorios (sin default): PROJECT_PLAN.md exige bear case + probabilidad en toda
+    # propuesta de compra o venta — ver validate_trade_proposal. No opcionales porque una
+    # propuesta sin esto no es lo que este proyecto entiende por "analisis completo".
+    bear_case: str
+    bear_case_probability: float
     asset_class: str = "stock"
 
     @property
@@ -120,6 +138,16 @@ def validate_trade_proposal(proposal: TradeProposal, portfolio: PortfolioState) 
 
     if proposal.price <= 0:
         return GuardrailResult(False, "el precio debe ser mayor a cero")
+
+    if not proposal.bear_case or not proposal.bear_case.strip():
+        return GuardrailResult(False, "toda propuesta debe incluir un bear case explicito")
+
+    if proposal.bear_case_probability is None or not (0.0 <= proposal.bear_case_probability <= 1.0):
+        return GuardrailResult(
+            False,
+            f"la probabilidad del bear case debe estar entre 0 y 1 "
+            f"(recibido: {proposal.bear_case_probability})",
+        )
 
     if proposal.asset_class not in ALLOWED_ASSET_CLASSES:
         return GuardrailResult(
@@ -158,6 +186,17 @@ def validate_trade_proposal(proposal: TradeProposal, portfolio: PortfolioState) 
             f"hasta resolver la revision",
         )
 
+    # Chequeo en vivo, ademas del flag de arriba: no depende de que algo haya escrito un
+    # thesis_flag en la DB primero. Se autorresuelve si el precio se recupera por encima del
+    # umbral — no hace falta una "thesis_resolution" explicita para que esto se destrabe.
+    if existing is not None and existing.unrealized_return_pct <= THESIS_REVIEW_TRIGGER_PCT:
+        return GuardrailResult(
+            False,
+            f"{proposal.ticker} esta en {existing.unrealized_return_pct:.1%} desde costo "
+            f"({THESIS_REVIEW_TRIGGER_PCT:.0%} o peor) — requiere revision de tesis explicita "
+            f"antes de agregar mas",
+        )
+
     if proposal.notional > portfolio.cash:
         return GuardrailResult(
             False,
@@ -172,15 +211,20 @@ def validate_trade_proposal(proposal: TradeProposal, portfolio: PortfolioState) 
             f"{len(portfolio.positions)} posiciones (maximo objetivo: {TARGET_MAX_POSITIONS})",
         )
 
-    existing_value = existing.current_value if existing else 0.0
-    resulting_position_value = existing_value + proposal.notional
-    total_value = portfolio.total_value
-    resulting_pct = resulting_position_value / total_value if total_value > 0 else float("inf")
+    # "Al costo", no a valor de mercado (ver PROJECT_PLAN.md Seccion 1 y el docstring de este
+    # modulo): usar current_value/total_value aqui permitiria promediar a la baja una posicion
+    # perdedora mas alla de su costo real, mientras una ganadora se topa con el limite por
+    # apreciacion de precio sin haberse agregado nada — exactamente al reves de la intencion
+    # de la regla. cost_basis/total_cost_basis no se mueven con el precio de mercado.
+    existing_cost = existing.cost_basis if existing else 0.0
+    resulting_position_cost = existing_cost + proposal.notional
+    total_cost = portfolio.total_cost_basis
+    resulting_pct = resulting_position_cost / total_cost if total_cost > 0 else float("inf")
     if resulting_pct > MAX_POSITION_PCT:
         return GuardrailResult(
             False,
-            f"la compra dejaria a {proposal.ticker} en {resulting_pct:.1%} de la cartera "
-            f"(maximo permitido: {MAX_POSITION_PCT:.0%})",
+            f"la compra dejaria a {proposal.ticker} en {resulting_pct:.1%} de la cartera al "
+            f"costo (maximo permitido: {MAX_POSITION_PCT:.0%})",
         )
 
     warnings = []

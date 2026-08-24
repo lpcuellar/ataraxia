@@ -106,6 +106,8 @@ def process_proposal(proposal: dict, dry_run: bool = False) -> str:
         action=proposal["action"],
         quantity=float(proposal["quantity"]),
         price=float(proposal["price"]),
+        bear_case=proposal["bear_case"],
+        bear_case_probability=proposal["bear_case_probability"],
     )
 
     result = v.validate_trade_proposal(trade, portfolio)

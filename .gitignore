@@ -1,15 +1,19 @@
 .DS_Store
 **/.DS_Store
 .env
+.env.*
+!.env.example
 .claude/
 .mcp.json
 venv/
 __pycache__/
 *.pyc
-logs/*.log
-data/cache/
-data/rotation_state.json
-data/pending_db_writes/
+*.pem
+*.key
+/logs/
+!/logs/.gitkeep
+/data/
+!/data/.gitkeep
 
 # --- GitHub's standard Python template, kept as a broader safety net ---
 *.py[codz]

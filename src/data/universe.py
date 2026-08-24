@@ -153,9 +153,27 @@ def refresh_pool_if_stale(state: RotationState, refresh_interval_days: int = 30)
         min_cap = config["filtros_cuantitativos"]["market_cap_minimo_usd"]
         constituents = fundamentals.get_sp500_constituents()
         screener_results = fundamentals.screen_by_market_cap(min_cap)
+
+        # Anclar la rotacion al ticker donde ibamos ANTES de pisar el pool viejo — refrescar
+        # el pool (verificacion periodica, no un evento raro) no deberia por si solo perder
+        # semanas de progreso de cobertura reiniciando a 0 cada vez.
+        anchor_ticker = (
+            state.pool[state.next_index]
+            if state.pool and 0 <= state.next_index < len(state.pool)
+            else None
+        )
+
         state.pool = build_quantitative_pool(constituents, screener_results)
         state.pool_last_refreshed = date.today().isoformat()
-        state.next_index = 0
+
+        if anchor_ticker and anchor_ticker in state.pool:
+            state.next_index = state.pool.index(anchor_ticker)
+        else:
+            # El ancla ya no esta en el pool nuevo (dejo de calificar, fue adquirida, etc.)
+            # — no hay una posicion "correcta" a la que volver, asi que se reinicia. Esto es
+            # la excepcion (el pool cambio bajo los pies), no lo que pasa en cada refresh.
+            state.next_index = 0
+
         state.save()
 
     return state
@@ -178,12 +196,23 @@ def get_weekly_batch() -> list[str]:
             "screener y sp500-constituent de FMP esten devolviendo datos."
         )
 
-    candidates, new_index = select_next_batch(state.pool, state.next_index, batch_size * 2)
-
+    # Se camina el pool circularmente UN ticker a la vez, e idx solo avanza por los que de
+    # verdad se inspeccionan (aceptados o rechazados por cobertura) — nunca por candidatos
+    # "reservados" y despues descartados sin mirar. Antes esto pedia batch_size*2 candidatos
+    # de una via select_next_batch() pero solo investigaba batch_size, y el indice avanzaba
+    # igual por los que ni se llegaban a inspeccionar: la mitad del pool se saltaba cada
+    # semana sin que nadie lo revisara. max_inspections acota esto a una vuelta completa al
+    # pool por corrida, para no hacer loop infinito si casi nada cumple cobertura minima.
     accepted = []
-    for ticker in candidates:
-        if len(accepted) >= batch_size:
-            break
+    idx = state.next_index % len(state.pool)
+    inspected = 0
+    max_inspections = len(state.pool)
+
+    while len(accepted) < batch_size and inspected < max_inspections:
+        ticker = state.pool[idx]
+        idx = (idx + 1) % len(state.pool)
+        inspected += 1
+
         estimates = fundamentals.get_analyst_estimates(ticker, limit=1)
         analyst_count = 0
         if estimates:
@@ -191,7 +220,7 @@ def get_weekly_batch() -> list[str]:
         if analyst_count >= min_analyst_coverage:
             accepted.append(ticker)
 
-    state.next_index = new_index
+    state.next_index = idx
     state.reviewed_ever = list(set(state.reviewed_ever) | set(accepted))
     state.save()
 

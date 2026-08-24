@@ -327,6 +327,41 @@ def get_account_state() -> dict:
     return {"holdings": holdings, "cash": cash, "todays_trades": todays_trades}
 
 
+def get_cash_events(event_type: str | None = None) -> list[dict]:
+    """Todos los cash_events, opcionalmente filtrados por tipo (p.ej. 'deposit'). Usado por
+    src/reporting/performance.py para saber cuanto y desde cuando se fondeo la cuenta."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            if event_type is not None:
+                cur.execute(
+                    "select date, event_type, amount, note from cash_events "
+                    "where event_type = %(event_type)s order by date",
+                    {"event_type": event_type},
+                )
+            else:
+                cur.execute("select date, event_type, amount, note from cash_events order by date")
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def get_performance_history() -> list[dict]:
+    """Historico de snapshots de performance, ordenado cronologicamente — insumo para
+    Sharpe ratio y drawdown en src/reporting/performance.py."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "select date, fund_value, sp500_equivalent_value, cumulative_return_pct, "
+                "sp500_cumulative_return_pct, current_drawdown_pct, max_drawdown_pct, "
+                "sharpe_ratio from performance order by date"
+            )
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def get_flagged_tickers() -> set:
     """Tickers actualmente bajo revision obligatoria de tesis: su ultimo evento de tesis en
     decisions es un 'thesis_flag' sin 'thesis_resolution' posterior."""
@@ -393,7 +428,8 @@ def get_pending_proposals() -> list[dict]:
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "select id, date, ticker, action, quantity, price, rationale "
+                "select id, date, ticker, action, quantity, price, rationale, "
+                "bear_case, bear_case_probability "
                 "from decisions where execution_status = 'pending' order by id"
             )
             return [dict(r) for r in cur.fetchall()]

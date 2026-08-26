@@ -220,19 +220,14 @@ def get_weekly_batch() -> list[str]:
         inspected += 1
 
         try:
-            estimates = fundamentals.get_analyst_estimates(ticker, limit=1)
-        except requests.exceptions.HTTPError as e:
-            # FMP restringe analyst-estimates a un allowlist de tickers "conocidos" en el
-            # plan actual (verificado el 26 de agosto de 2026: AAPL/MSFT/NVDA/... funcionan,
-            # otros large-caps menos prominentes como A dan 402) — un ticker bloqueado no
-            # deberia tumbar la corrida entera de seleccion del lote, se trata igual que
-            # "sin cobertura de analistas" y se sigue con el resto del pool.
-            print(f"AVISO: analyst-estimates fallo para {ticker} ({e}) — se omite este ciclo.")
+            forecast = fundamentals.get_analyst_forecast(ticker)
+        except requests.exceptions.RequestException as e:
+            # Fallo de red/HTTP puntual (timeout, 404 en la pagina de forecast, etc.) — no
+            # deberia tumbar la corrida entera de seleccion del lote, se trata igual que "sin
+            # cobertura medible" y se sigue con el resto del pool.
+            print(f"AVISO: pronostico de analistas fallo para {ticker} ({e}) — se omite este ciclo.")
             continue
-        analyst_count = 0
-        if estimates:
-            analyst_count = estimates[0].get("numAnalystsRevenue", 0) or 0
-        if analyst_count >= min_analyst_coverage:
+        if forecast["num_analysts"] >= min_analyst_coverage:
             accepted.append(ticker)
 
     state.next_index = idx

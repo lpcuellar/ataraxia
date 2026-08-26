@@ -5,8 +5,19 @@ Endpoints verificados (23 jul 2026):
   - /stable/quote?symbol=       (precio actual, cualquier ticker o indice como ^GSPC)
   - /stable/historical-price-eod/full?symbol=   (historico OHLCV, incluye indices)
 
+/stable/quote resulto estar bloqueado por ticker en el plan actual de FMP — no solo para
+analyst-estimates (ver src/data/fundamentals.py): 0/14 tickers reales del S&P 500 probados
+fuera de un puñado de mega-caps conocidos devolvieron 200 (verificado en vivo el 26 de agosto
+de 2026). get_price() ahora scrapea stockanalysis.com/stocks/<ticker>/ en su lugar — mismo
+sustituto que get_analyst_forecast(), consolidado aca porque todos los callers reales
+(src/reporting/portfolio.py, src/reporting/performance.py, scripts/brain_fundamentals.py)
+solo pasan tickers de acciones en cartera/candidatas, nunca el simbolo de indice ^GSPC (ese
+camino sigue via _get()/get_sp500_historical(), sin tocar).
+
 Fase 1.
 """
+
+import re
 
 import requests
 
@@ -15,6 +26,8 @@ from src.data.cache import cached_call
 
 BASE_URL = "https://financialmodelingprep.com/stable"
 SP500_INDEX_SYMBOL = "^GSPC"
+
+_PRICE_RE = re.compile(r"([\d,]+\.\d+)\s+[+-][\d.]+\s+\([\d.]+%\)\s+At close:")
 
 
 def _get(path: str, params: dict | None = None) -> dict | list:
@@ -26,13 +39,28 @@ def _get(path: str, params: dict | None = None) -> dict | list:
 
 
 def get_price(ticker: str) -> float:
-    """Precio actual de un ticker (o indice)."""
+    """Precio actual de una accion, via scraping de stockanalysis.com (ver nota arriba —
+    /stable/quote de FMP esta bloqueado para la mayoria de tickers reales en el plan actual).
+    Lanza RuntimeError si la pagina cargo pero el patron de precio no matcheo (probable
+    cambio de formato) — no confundir con un ticker invalido, que ya falla antes via
+    raise_for_status()."""
     def fetch():
-        data = _get("quote", {"symbol": ticker})
-        if isinstance(data, list) and data:
-            return {"price": data[0].get("price")}
-        return {"price": None}
-    result = cached_call("quote", {"ticker": ticker}, fetch)
+        resp = requests.get(
+            f"https://stockanalysis.com/stocks/{ticker.lower()}/",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; AtaraxiaResearchBot/1.0)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", resp.text))
+        match = _PRICE_RE.search(text)
+        if not match:
+            raise RuntimeError(
+                f"No se pudo extraer el precio de {ticker} desde stockanalysis.com/stocks/"
+                f"{ticker.lower()}/ — la pagina probablemente cambio de formato, revisar "
+                f"_PRICE_RE en src/data/market.py."
+            )
+        return {"price": float(match.group(1).replace(",", ""))}
+    result = cached_call("price_scraped", {"ticker": ticker}, fetch)
     return result["price"]
 
 

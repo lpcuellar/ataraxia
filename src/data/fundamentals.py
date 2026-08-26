@@ -20,11 +20,19 @@ get_sp500_constituents()/screen_by_market_cap() se dejan tal cual (utiles si se 
 mas adelante), pero src/data/universe.py ya no las llama — usa get_sp500_with_market_cap()
 en su lugar, ver abajo.
 
+analyst-estimates resulto estar bloqueado por ticker (no por endpoint completo) — funciona
+para varios large-caps conocidos pero rechaza la mayoria de tickers reales del S&P 500, de
+forma inconsistente incluso entre clases de accion de la misma empresa (GOOG bloqueado,
+GOOGL no). get_analyst_estimates() se deja tal cual; get_analyst_forecast() (scraping,
+ver abajo) es lo que src/data/universe.py y scripts/brain_fundamentals.py usan ahora.
+
 Fase 1.
 """
 
 import re
+from io import StringIO
 
+import pandas as pd
 import requests
 
 from src.config import require_fmp_key
@@ -138,3 +146,146 @@ def get_sp500_with_market_cap() -> list[dict]:
             for symbol, name, market_cap in rows
         ]
     return cached_call("sp500_with_market_cap", {}, fetch)
+
+
+# ---------------------------------------------------------------------------
+# Sustituto de analyst-estimates mientras siga bloqueado por ticker en el plan actual de FMP
+# (402 "Premium Query Parameter", verificado el 26 de agosto de 2026).
+# ---------------------------------------------------------------------------
+
+def get_analyst_forecast(ticker: str) -> dict:
+    """Estimados de analistas via scraping de stockanalysis.com/stocks/<ticker>/forecast/.
+
+    La tabla anual de esa pagina trae una fila "No. Analysts" junto a Revenue/EPS por año
+    fiscal (columnas mas alla del año fiscal actual+1 quedan marcadas "Upgrade" — fuera del
+    free tier de ESE sitio, no accesibles). Se usa la columna mas reciente con un valor real
+    de "No. Analysts" — cae distinto por ticker segun el cierre de año fiscal de cada empresa
+    (p.ej. NVDA cae en FY 2027 mientras AAPL cae en FY 2026), por eso se busca por contenido
+    en vez de asumir una columna fija.
+
+    num_analysts=0 si no se encuentra ninguna columna con dato real — se trata igual que "sin
+    cobertura medible" (mismo comportamiento que antes con el campo roto de FMP), no como
+    error. Un error real (tabla no encontrada, ticker sin pagina de forecast) se lanza
+    ruidosamente en cambio de devolver un resultado silenciosamente vacio."""
+    def fetch():
+        resp = requests.get(
+            f"https://stockanalysis.com/stocks/{ticker.lower()}/forecast/",
+            headers={"User-Agent": "Mozilla/5.0 (compatible; AtaraxiaResearchBot/1.0)"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        tables = pd.read_html(StringIO(resp.text))
+
+        fy_table = None
+        for t in tables:
+            first_col = t.iloc[:, 0].astype(str)
+            if first_col.str.contains("No. Analysts").any():
+                fy_table = t
+                break
+        if fy_table is None:
+            raise RuntimeError(
+                f"No se encontro la tabla de pronostico anual para {ticker} en "
+                f"stockanalysis.com/stocks/{ticker.lower()}/forecast/ — la pagina "
+                f"probablemente cambio de formato, revisar get_analyst_forecast()."
+            )
+
+        fy_table = fy_table.set_index(fy_table.columns[0])
+        analysts_row = fy_table.loc["No. Analysts"]
+        revenue_row = fy_table.loc["Revenue"] if "Revenue" in fy_table.index else None
+        eps_row = fy_table.loc["EPS"] if "EPS" in fy_table.index else None
+
+        chosen_col = None
+        for col in reversed(fy_table.columns):
+            val = str(analysts_row[col])
+            if val.replace(".", "", 1).isdigit():
+                chosen_col = col
+                break
+
+        if chosen_col is None:
+            return {
+                "symbol": ticker.upper(), "fiscal_year": None, "num_analysts": 0,
+                "revenue": None, "eps": None,
+            }
+
+        return {
+            "symbol": ticker.upper(),
+            "fiscal_year": chosen_col[0] if isinstance(chosen_col, tuple) else chosen_col,
+            "num_analysts": int(float(analysts_row[chosen_col])),
+            "revenue": revenue_row[chosen_col] if revenue_row is not None else None,
+            "eps": eps_row[chosen_col] if eps_row is not None else None,
+        }
+    return cached_call("analyst_forecast", {"ticker": ticker}, fetch)
+
+
+# ---------------------------------------------------------------------------
+# Sustituto de key-metrics + ratios mientras sigan bloqueados por ticker en el plan actual de
+# FMP (402, verificado el 26 de agosto de 2026 — mismo patron que quote/analyst-estimates).
+# ---------------------------------------------------------------------------
+
+def _first_data_column(df):
+    """Las tablas de stockanalysis.com ponen el periodo mas reciente (TTM/Current) en la
+    primera columna de datos, justo despues de la columna de etiqueta — a diferencia de la
+    tabla de pronosticos (get_analyst_forecast), aca esa columna siempre trae un valor real,
+    nunca "Upgrade", asi que no hace falta buscar la primera columna valida."""
+    return df.columns[1]
+
+
+def get_valuation_metrics(ticker: str) -> dict:
+    """P/E, forward P/E, P/S, ROIC y margenes, via scraping de dos paginas de
+    stockanalysis.com (financials/ratios/ para multiplos y ROIC, financials/ para margenes) —
+    reemplaza a get_key_metrics()/get_ratios() de FMP para estos campos especificos mientras
+    esos endpoints sigan bloqueados por ticker en el plan actual."""
+    def fetch():
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; AtaraxiaResearchBot/1.0)"}
+        result = {"symbol": ticker.upper()}
+
+        resp = requests.get(
+            f"https://stockanalysis.com/stocks/{ticker.lower()}/financials/ratios/",
+            headers=headers, timeout=15,
+        )
+        resp.raise_for_status()
+        tables = pd.read_html(StringIO(resp.text))
+        pe_table = next((t for t in tables if t.iloc[:, 0].astype(str).eq("PE Ratio").any()), None)
+        roic_table = next(
+            (t for t in tables if t.iloc[:, 0].astype(str).str.contains("ROIC", regex=False).any()),
+            None,
+        )
+        if pe_table is None or roic_table is None:
+            raise RuntimeError(
+                f"No se encontraron las tablas de multiplos/ROIC para {ticker} en "
+                f"stockanalysis.com/stocks/{ticker.lower()}/financials/ratios/ — la pagina "
+                f"probablemente cambio de formato, revisar get_valuation_metrics()."
+            )
+        pe_table = pe_table.set_index(pe_table.columns[0])
+        roic_table = roic_table.set_index(roic_table.columns[0])
+        col = _first_data_column(pe_table)
+        result["pe_ratio"] = pe_table.loc["PE Ratio", col]
+        result["forward_pe"] = pe_table.loc["Forward PE", col]
+        result["ps_ratio"] = pe_table.loc["PS Ratio", col]
+        roic_col = _first_data_column(roic_table)
+        roic_row = next(i for i in roic_table.index if "ROIC" in i)
+        result["roic"] = roic_table.loc[roic_row, roic_col]
+
+        resp = requests.get(
+            f"https://stockanalysis.com/stocks/{ticker.lower()}/financials/",
+            headers=headers, timeout=15,
+        )
+        resp.raise_for_status()
+        tables = pd.read_html(StringIO(resp.text))
+        margin_table = next(
+            (t for t in tables if t.iloc[:, 0].astype(str).eq("Gross Margin").any()), None
+        )
+        if margin_table is None:
+            raise RuntimeError(
+                f"No se encontro la tabla de margenes para {ticker} en "
+                f"stockanalysis.com/stocks/{ticker.lower()}/financials/ — la pagina "
+                f"probablemente cambio de formato, revisar get_valuation_metrics()."
+            )
+        margin_table = margin_table.set_index(margin_table.columns[0])
+        mcol = _first_data_column(margin_table)
+        result["gross_margin"] = margin_table.loc["Gross Margin", mcol]
+        result["operating_margin"] = margin_table.loc["Operating Margin", mcol]
+        result["net_margin"] = margin_table.loc["Profit Margin", mcol]
+
+        return result
+    return cached_call("valuation_metrics", {"ticker": ticker}, fetch)

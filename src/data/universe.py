@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
 
+import requests
+
 from src.config import DATA_DIR
 from src.data import fundamentals
 from src.db import models as db
@@ -151,8 +153,12 @@ def refresh_pool_if_stale(state: RotationState, refresh_interval_days: int = 30)
     if needs_refresh:
         config = _load_universe_config()
         min_cap = config["filtros_cuantitativos"]["market_cap_minimo_usd"]
-        constituents = fundamentals.get_sp500_constituents()
-        screener_results = fundamentals.screen_by_market_cap(min_cap)
+        # sp500-constituent y company-screener (FMP) estan bloqueados en el plan actual (402
+        # "Restricted Endpoint", verificado el 26 de agosto de 2026) — get_sp500_with_market_
+        # cap() cubre ambos de una: constituyentes del S&P 500 + market cap real por ticker,
+        # via scraping de stockanalysis.com (ver src/data/fundamentals.py).
+        constituents = fundamentals.get_sp500_with_market_cap()
+        screener_results = [row for row in constituents if row.get("marketCap", 0) >= min_cap]
 
         # Anclar la rotacion al ticker donde ibamos ANTES de pisar el pool viejo — refrescar
         # el pool (verificacion periodica, no un evento raro) no deberia por si solo perder
@@ -213,7 +219,16 @@ def get_weekly_batch() -> list[str]:
         idx = (idx + 1) % len(state.pool)
         inspected += 1
 
-        estimates = fundamentals.get_analyst_estimates(ticker, limit=1)
+        try:
+            estimates = fundamentals.get_analyst_estimates(ticker, limit=1)
+        except requests.exceptions.HTTPError as e:
+            # FMP restringe analyst-estimates a un allowlist de tickers "conocidos" en el
+            # plan actual (verificado el 26 de agosto de 2026: AAPL/MSFT/NVDA/... funcionan,
+            # otros large-caps menos prominentes como A dan 402) — un ticker bloqueado no
+            # deberia tumbar la corrida entera de seleccion del lote, se trata igual que
+            # "sin cobertura de analistas" y se sigue con el resto del pool.
+            print(f"AVISO: analyst-estimates fallo para {ticker} ({e}) — se omite este ciclo.")
+            continue
         analyst_count = 0
         if estimates:
             analyst_count = estimates[0].get("numAnalystsRevenue", 0) or 0

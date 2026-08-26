@@ -29,7 +29,17 @@ import sys
 from datetime import date
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT_DIR))
+
+# Cargar .env aca, ANTES del override de abajo y antes de importar src.config: sin esto,
+# os.getenv("EXECUTOR_DB_USER") siempre da None (nada habia leido .env todavia) y el override
+# es un no-op silencioso — src.config termina usando el default ataraxia_brain, que solo tiene
+# SELECT sobre executed_trades/cash_events. load_dotenv() no pisa variables ya exportadas en
+# el shell, asi que esto es seguro incluso si el usuario ya las exporto a mano.
+load_dotenv(ROOT_DIR / ".env")
 
 # Debe pasar ANTES de importar src.config: ese modulo lee las variables de entorno a nivel
 # de modulo, una sola vez, al importarse.

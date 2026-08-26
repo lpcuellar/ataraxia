@@ -27,7 +27,7 @@ from src.data.cache import cached_call
 BASE_URL = "https://financialmodelingprep.com/stable"
 SP500_INDEX_SYMBOL = "^GSPC"
 
-_PRICE_RE = re.compile(r"([\d,]+\.\d+)\s+[+-][\d.]+\s+\([\d.]+%\)\s+At close:")
+_PRICE_RE = re.compile(r"([\d,]+\.\d+)\s+[+-][\d.]+\s+\([+-]?[\d.]+%\)\s+At close:")
 
 
 def _get(path: str, params: dict | None = None) -> dict | list:

@@ -183,11 +183,19 @@ def get_analyst_forecast(ticker: str) -> dict:
                 fy_table = t
                 break
         if fy_table is None:
-            raise RuntimeError(
-                f"No se encontro la tabla de pronostico anual para {ticker} en "
-                f"stockanalysis.com/stocks/{ticker.lower()}/forecast/ — la pagina "
-                f"probablemente cambio de formato, revisar get_analyst_forecast()."
-            )
+            # Igual que ROIC/margenes en get_valuation_metrics: algunos sectores pueden no
+            # traer esta tabla en absoluto, no es necesariamente un cambio de formato de la
+            # pagina — se trata como "sin cobertura medible", no como error fatal.
+            if not tables:
+                raise RuntimeError(
+                    f"La pagina de pronostico para {ticker} en stockanalysis.com/stocks/"
+                    f"{ticker.lower()}/forecast/ no trajo ninguna tabla — probablemente "
+                    f"cambio de formato, revisar get_analyst_forecast()."
+                )
+            return {
+                "symbol": ticker.upper(), "fiscal_year": None, "num_analysts": 0,
+                "revenue": None, "eps": None,
+            }
 
         fy_table = fy_table.set_index(fy_table.columns[0])
         analysts_row = fy_table.loc["No. Analysts"]
@@ -234,10 +242,24 @@ def get_valuation_metrics(ticker: str) -> dict:
     """P/E, forward P/E, P/S, ROIC y margenes, via scraping de dos paginas de
     stockanalysis.com (financials/ratios/ para multiplos y ROIC, financials/ para margenes) —
     reemplaza a get_key_metrics()/get_ratios() de FMP para estos campos especificos mientras
-    esos endpoints sigan bloqueados por ticker en el plan actual."""
+    esos endpoints sigan bloqueados por ticker en el plan actual.
+
+    Verificado en vivo contra las 18 acciones del primer lote real (26 de agosto de 2026):
+    ROIC y el bloque completo de margenes faltan por completo para aseguradoras (ACGL, AFL,
+    AIG — no reportan "gross margin", concepto que no aplica a su modelo de negocio) y ROIC
+    especificamente falta para utilities (AEE, AEP). "Forward PE" tampoco esta siempre
+    presente en la tabla de multiplos. Ninguno de estos es un cambio de formato de la pagina —
+    son campos que ese sector simplemente no reporta — asi que cada campo se busca de forma
+    independiente y queda en None si no esta, en vez de que la ausencia de UN campo tumbe
+    todo el resultado. Solo se lanza RuntimeError si la tabla de multiplos (PE Ratio, la mas
+    universal de todas — presente incluso para aseguradoras) no aparece en absoluto, señal
+    real de que la pagina cambio de formato."""
     def fetch():
         headers = {"User-Agent": "Mozilla/5.0 (compatible; AtaraxiaResearchBot/1.0)"}
-        result = {"symbol": ticker.upper()}
+        result = {
+            "symbol": ticker.upper(), "pe_ratio": None, "forward_pe": None, "ps_ratio": None,
+            "roic": None, "gross_margin": None, "operating_margin": None, "net_margin": None,
+        }
 
         resp = requests.get(
             f"https://stockanalysis.com/stocks/{ticker.lower()}/financials/ratios/",
@@ -246,25 +268,25 @@ def get_valuation_metrics(ticker: str) -> dict:
         resp.raise_for_status()
         tables = pd.read_html(StringIO(resp.text))
         pe_table = next((t for t in tables if t.iloc[:, 0].astype(str).eq("PE Ratio").any()), None)
-        roic_table = next(
-            (t for t in tables if t.iloc[:, 0].astype(str).str.contains("ROIC", regex=False).any()),
-            None,
-        )
-        if pe_table is None or roic_table is None:
+        if pe_table is None:
             raise RuntimeError(
-                f"No se encontraron las tablas de multiplos/ROIC para {ticker} en "
+                f"No se encontro la tabla de multiplos (PE Ratio) para {ticker} en "
                 f"stockanalysis.com/stocks/{ticker.lower()}/financials/ratios/ — la pagina "
                 f"probablemente cambio de formato, revisar get_valuation_metrics()."
             )
         pe_table = pe_table.set_index(pe_table.columns[0])
-        roic_table = roic_table.set_index(roic_table.columns[0])
         col = _first_data_column(pe_table)
-        result["pe_ratio"] = pe_table.loc["PE Ratio", col]
-        result["forward_pe"] = pe_table.loc["Forward PE", col]
-        result["ps_ratio"] = pe_table.loc["PS Ratio", col]
-        roic_col = _first_data_column(roic_table)
-        roic_row = next(i for i in roic_table.index if "ROIC" in i)
-        result["roic"] = roic_table.loc[roic_row, roic_col]
+        for field, label in (("pe_ratio", "PE Ratio"), ("forward_pe", "Forward PE"), ("ps_ratio", "PS Ratio")):
+            if label in pe_table.index:
+                result[field] = pe_table.loc[label, col]
+
+        for t in tables:
+            labels = t.iloc[:, 0].astype(str)
+            matches = labels[labels.str.contains("ROIC", regex=False)]
+            if not matches.empty:
+                t = t.set_index(t.columns[0])
+                result["roic"] = t.loc[matches.iloc[0], _first_data_column(t)]
+                break
 
         resp = requests.get(
             f"https://stockanalysis.com/stocks/{ticker.lower()}/financials/",
@@ -275,17 +297,13 @@ def get_valuation_metrics(ticker: str) -> dict:
         margin_table = next(
             (t for t in tables if t.iloc[:, 0].astype(str).eq("Gross Margin").any()), None
         )
-        if margin_table is None:
-            raise RuntimeError(
-                f"No se encontro la tabla de margenes para {ticker} en "
-                f"stockanalysis.com/stocks/{ticker.lower()}/financials/ — la pagina "
-                f"probablemente cambio de formato, revisar get_valuation_metrics()."
-            )
-        margin_table = margin_table.set_index(margin_table.columns[0])
-        mcol = _first_data_column(margin_table)
-        result["gross_margin"] = margin_table.loc["Gross Margin", mcol]
-        result["operating_margin"] = margin_table.loc["Operating Margin", mcol]
-        result["net_margin"] = margin_table.loc["Profit Margin", mcol]
+        if margin_table is not None:
+            margin_table = margin_table.set_index(margin_table.columns[0])
+            mcol = _first_data_column(margin_table)
+            for field, label in (("gross_margin", "Gross Margin"), ("operating_margin", "Operating Margin"),
+                                  ("net_margin", "Profit Margin")):
+                if label in margin_table.index:
+                    result[field] = margin_table.loc[label, mcol]
 
         return result
     return cached_call("valuation_metrics", {"ticker": ticker}, fetch)

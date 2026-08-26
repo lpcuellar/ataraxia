@@ -32,36 +32,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from src.config import DATA_DIR
-from src.data import market
 from src.db import models as db
 from src.executor import notifier
 from src.guardrails import validator as v
+from src.reporting.portfolio import build_portfolio_state
 
 KILL_SWITCH_FILE = DATA_DIR / "KILL_SWITCH"
-
-
-def build_portfolio_state() -> v.PortfolioState:
-    """Reconstruye el PortfolioState del validator desde la verdad de la DB + precios
-    actuales de FMP. Esta funcion corre en el executor con datos que el brain no puede
-    haber fabricado (solo el executor escribe executed_trades/cash_events)."""
-    account = db.get_account_state()
-    positions = []
-    for ticker, h in account["holdings"].items():
-        current_price = market.get_price(ticker)
-        positions.append(
-            v.Position(
-                ticker=ticker,
-                quantity=h["quantity"],
-                avg_cost=h["avg_cost"],
-                current_price=current_price,
-            )
-        )
-    return v.PortfolioState(
-        positions=positions,
-        cash=account["cash"],
-        todays_trades=account["todays_trades"],
-        flagged_for_review=db.get_flagged_tickers(),
-    )
 
 
 def _execute_on_ibkr(proposal: dict) -> dict:

@@ -31,11 +31,19 @@ Después:
 3. Confirmar el pipeline de datos: `python scripts/smoke_test_fmp.py`
 
 ## Estado actual
-- **Fase 1 (datos) completa:** cliente FMP, precios/benchmark, embudo de candidatos de dos
-  etapas, caché en disco.
-- **Fase 3 (DB) implementada:** schema en `supabase/migrations/`, `src/db/models.py`
-  conectado vía `psycopg2`, `RotationState` migrado a la tabla `universe_state`.
-- **Pendiente:** `src/guardrails/validator.py` (validación determinista de guardrails).
+- **Datos, guardrails y DB implementados:** cliente FMP, precios/benchmark, embudo de
+  candidatos de dos etapas, caché en disco; `src/guardrails/validator.py` (validación
+  determinista, incluyendo el tope de 15% al costo y el trigger de revisión de tesis a -20%,
+  ambos ya cableados en `validate_trade_proposal`); schema en `supabase/migrations/`,
+  `src/db/models.py` conectado vía `psycopg2`.
+- **Ejecución manual (arquitectura "mimetizar a The Claude Portfolio de cerca"):** el humano
+  ejecuta todo en IBKR directamente; `scripts/log_manual_trade.py` registra la verdad de la
+  cuenta. `src/executor/`, `src/broker/ibkr_client.py` y `docker/` implementan un executor
+  automatizado que ya no es parte de la arquitectura objetivo — quedan en el repo sin usarse,
+  pendientes de limpieza.
+- **Pendiente:** programar la sesión de Cowork/Routine que sigue `src/agent/prompt.py` a
+  diario — el código que esa sesión invoca por bash (`scripts/brain_*.py`) ya existe y está
+  probado, falta el paso de configurar la tarea programada en el dashboard.
 
 ## Estructura
 ```
@@ -47,12 +55,19 @@ ataraxia/
 │   ├── README.md            # setup de la base de datos
 │   └── migrations/          # schema versionado, desplegado vía integración de GitHub
 ├── src/
-│   ├── agent/                # prompt — la orquestación la hace esta sesión de Cowork
+│   ├── agent/                # prompt — la orquestación la hace la sesión de Cowork/Routine
 │   ├── guardrails/            # validación determinista, no negociable
 │   ├── data/                   # fundamentales, mercado, embudo de candidatos
-│   ├── broker/                  # wrapper sobre IBKR Client Portal API (Fase 5+)
-│   └── db/                       # acceso a Supabase/Postgres (psycopg2)
+│   ├── reporting/                # métricas de performance + reconstrucción del portfolio
+│   ├── broker/                     # wrapper sobre IBKR Client Portal API — sin usar (ver Estado actual)
+│   ├── executor/                    # executor automatizado — sin usar (ver Estado actual)
+│   └── db/                           # acceso a Supabase/Postgres (psycopg2)
 ├── dashboard/
 └── scripts/
-    └── run_daily.py            # helpers que el brain invoca por bash
+    ├── brain_portfolio.py      # estado del portafolio — el brain lo invoca por bash
+    ├── brain_candidates.py     # lote rotativo de candidatos — el brain lo invoca por bash
+    ├── brain_fundamentals.py   # datos fundamentales de un ticker — el brain lo invoca por bash
+    ├── brain_decide.py         # registra propuestas/revisiones — el brain lo invoca por bash
+    ├── log_manual_trade.py     # el humano registra fills/cash reales ejecutados en IBKR
+    └── run_daily.py            # reporte de solo lectura para el humano
 ```

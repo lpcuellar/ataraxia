@@ -24,8 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import models as db  # noqa: E402
-from src.executor.run_executor import build_portfolio_state  # noqa: E402
 from src.guardrails import validator as v  # noqa: E402
+from src.reporting.portfolio import build_portfolio_state  # noqa: E402
 
 
 def main():

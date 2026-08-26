@@ -216,7 +216,7 @@ def get_weekly_batch() -> list[str]:
         estimates = fundamentals.get_analyst_estimates(ticker, limit=1)
         analyst_count = 0
         if estimates:
-            analyst_count = estimates[0].get("numberAnalystEstimatedRevenue", 0) or 0
+            analyst_count = estimates[0].get("numAnalystsRevenue", 0) or 0
         if analyst_count >= min_analyst_coverage:
             accepted.append(ticker)
 

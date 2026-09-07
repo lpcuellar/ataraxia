@@ -27,6 +27,17 @@ from src.data.cache import cached_call
 BASE_URL = "https://financialmodelingprep.com/stable"
 SP500_INDEX_SYMBOL = "^GSPC"
 
+# Fuente primaria: stockanalysis.com embebe un objeto de cotizacion estructurado en el HTML
+# (`quote:{c:...,p:<precio>,...}`), que es dato, no texto de presentacion. Se prefiere sobre
+# _PRICE_RE porque no depende del copy de la pagina: verificado el 7 de septiembre de 2026
+# contra ATO/AVY/AWK/BALL/AVGO/AAPL/BRK.B/AMD (8/8), incluyendo tickers con punto.
+_QUOTE_PRICE_RE = re.compile(r"quote:\{[^}]*?\bp:(-?[\d.]+)")
+
+# Respaldo: el precio renderizado en el encabezado. Depende del literal "At close:", que NO
+# aparece en todos los tickers — ATO/AVY/AWK/BALL renderizan el precio y van directo a la
+# fecha, sin esa frase, y por eso fallaban con un RuntimeError pese a tener precio valido
+# (diagnosticado el 7 de septiembre de 2026). Se conserva solo como segunda linea de defensa
+# por si cambia el formato del objeto embebido.
 _PRICE_RE = re.compile(r"([\d,]+\.\d+)\s+[+-][\d.]+\s+\([+-]?[\d.]+%\)\s+At close:")
 
 
@@ -51,13 +62,22 @@ def get_price(ticker: str) -> float:
             timeout=15,
         )
         resp.raise_for_status()
+
+        # Primero el objeto de cotizacion embebido (sobre el HTML crudo, no sobre el texto
+        # sin tags — el literal vive en un <script>).
+        match = _QUOTE_PRICE_RE.search(resp.text)
+        if match:
+            return {"price": float(match.group(1))}
+
+        # Respaldo sobre el texto renderizado.
         text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", resp.text))
         match = _PRICE_RE.search(text)
         if not match:
             raise RuntimeError(
                 f"No se pudo extraer el precio de {ticker} desde stockanalysis.com/stocks/"
-                f"{ticker.lower()}/ — la pagina probablemente cambio de formato, revisar "
-                f"_PRICE_RE en src/data/market.py."
+                f"{ticker.lower()}/ — fallaron tanto el objeto de cotizacion embebido como el "
+                f"precio renderizado, asi que la pagina probablemente cambio de formato. "
+                f"Revisar _QUOTE_PRICE_RE y _PRICE_RE en src/data/market.py."
             )
         return {"price": float(match.group(1).replace(",", ""))}
     result = cached_call("price_scraped", {"ticker": ticker}, fetch)

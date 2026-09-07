@@ -231,11 +231,25 @@ def get_analyst_forecast(ticker: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def _first_data_column(df):
-    """Las tablas de stockanalysis.com ponen el periodo mas reciente (TTM/Current) en la
-    primera columna de datos, justo despues de la columna de etiqueta — a diferencia de la
-    tabla de pronosticos (get_analyst_forecast), aca esa columna siempre trae un valor real,
-    nunca "Upgrade", asi que no hace falta buscar la primera columna valida."""
-    return df.columns[1]
+    """Columna del periodo mas reciente en una tabla de stockanalysis.com.
+
+    Se busca la columna "Current"/"TTM" **por nombre**, no por posicion. La version anterior
+    devolvia `df.columns[1]`, asumiendo que la primera columna de datos era siempre el periodo
+    corriente; despues del `set_index()` que hacen los callers, esa posicion es en realidad la
+    columna del ULTIMO AÑO FISCAL CERRADO, no la corriente. El resultado eran multiplos
+    plausibles pero desactualizados: para AVGO devolvia el forward P/E de FY 2025 (44.02) en
+    vez del corriente (20.68), un factor de mas de 2x sobre la metrica central de valuation.
+    Detectado el 7 de septiembre de 2026 cuando el brain noto que el forward P/E era
+    inconsistente con el EPS estimado de la misma corrida.
+
+    Si no aparece ninguna columna corriente reconocible se cae a la posicion previa, para no
+    romper tablas con otro encabezado."""
+    for col in df.columns:
+        # Los encabezados pueden ser MultiIndex ("Current", "Sep '26 ...").
+        label = " ".join(str(part) for part in col) if isinstance(col, tuple) else str(col)
+        if "current" in label.lower() or "ttm" in label.lower():
+            return col
+    return df.columns[0] if len(df.columns) == 1 else df.columns[1]
 
 
 def get_valuation_metrics(ticker: str) -> dict:

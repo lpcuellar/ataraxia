@@ -6,3 +6,4 @@ pandas>=2.2.0
 lxml>=5.0.0  # backend para pandas.read_html (src/data/fundamentals.get_analyst_forecast)
 psycopg2-binary>=2.9.9
 # ibind o IBeam se agregan aqui una vez elegido el wrapper especifico (Fase 0)
+yfinance>=0.2.40  # segunda fuente de datos (src/data/yahoo.py), respaldo de stockanalysis.com

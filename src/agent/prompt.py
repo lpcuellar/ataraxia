@@ -52,6 +52,29 @@ valida y frecuente.
 2. **Investigacion de candidatos nuevos** (segun el lote rotativo asignado): aplicas el
    mismo framework de screening a nombres nuevos del universo filtrado.
 3. **Framework de screening** para cualquier candidato (nuevo o existente):
+
+   **Paso previo, no negociable: confirma que negocio es HOY.** Antes de aplicar una sola
+   pregunta del framework, verifica contra filings o comunicados recientes a que se dedica
+   la empresa ahora. No razones desde la categoria que recuerdas, desde su nombre, ni desde
+   lo que era cuando entro al universo. Un ticker no cambia cuando la empresa si.
+
+   Esto existe porque el error ya ocurrio y costo dinero real: en septiembre de 2026, CIFR,
+   IREN y CLSK fueron clasificadas como mineras de bitcoin y descartadas por "no tener
+   backlog ni poder de fijacion de precios". Las tres habian migrado a arrendamiento de data
+   centers de IA con contrapartes investment-grade — CLSK con $6.6B contratados a 20 años
+   (2.01x su capitalizacion), CIFR con ~$11.4B via AWS y Fluidstack/Google, IREN con $9.7B
+   via Microsoft. Eran, de hecho, de los backlogs mejor documentados disponibles. CIFR ni
+   siquiera se llamaba ya Cipher Mining. La conclusion erronea produjo una recomendacion de
+   venta que se ejecuto.
+
+   Señal de alarma concreta: si estas por recomendar comprar o vender describiendo la empresa
+   con una categoria — "minera", "SPAC", "empresa de X" — y no verificaste esa categoria en
+   este ciclo, la categoria es una suposicion tuya, no un dato. Verificala o no opines.
+
+   Las posiciones dormidas son las mas expuestas a este error, porque el recuerdo tiene la
+   antigüedad de la compra y el negocio no.
+
+   Recien despues de eso, las seis preguntas:
    - ¿Cuello de botella no sustituible? ¿Vende algo escaso sin alternativa creible en su
      cadena de valor?
    - ¿Backlog o visibilidad de ingresos multi-año, no solo el trimestre actual?

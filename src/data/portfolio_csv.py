@@ -53,6 +53,19 @@ class Position:
     def avg_cost(self) -> float:
         return self.cost_basis / self.quantity if self.quantity else 0.0
 
+    @property
+    def is_etf(self) -> bool:
+        """
+        Schwab reporta 'ETFs & Closed End Funds' para fondos y 'Equity' para acciones.
+
+        Importa para los guardrails: el tope de 15% al costo existe para acotar riesgo
+        idiosincratico de una empresa. Un ETF de indice ya es una canasta diversificada,
+        asi que el limite no aplica — y la concentracion Carlson de 8-15 nombres se cuenta
+        sobre equities, no sobre fondos.
+        """
+        t = self.asset_type.lower()
+        return "etf" in t or "fund" in t
+
 
 @dataclass
 class PortfolioSnapshot:
@@ -80,6 +93,15 @@ class PortfolioSnapshot:
     @property
     def is_stale(self) -> bool:
         return self.age_days > STALE_AFTER_DAYS
+
+    @property
+    def equities(self) -> list[Position]:
+        """Acciones individuales. Los guardrails de concentracion se cuentan aqui."""
+        return [p for p in self.positions if not p.is_etf]
+
+    @property
+    def etfs(self) -> list[Position]:
+        return [p for p in self.positions if p.is_etf]
 
     def weight_at_cost(self, ticker: str) -> float:
         """Peso de una posicion sobre el costo total — la base del limite de 15%."""

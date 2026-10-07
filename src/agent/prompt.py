@@ -233,8 +233,12 @@ momento del analisis, y decilo explicitamente.
 
 ## Guardrails
 
-- Cartera objetivo: **8-15 posiciones** (concentracion Carlson)
-- Maximo 15% de una posicion individual al costo
+- Cartera objetivo: **8-15 acciones** (concentracion Carlson)
+- Maximo 15% de una **accion individual** al costo
+
+**Los ETFs se cuentan aparte.** El tope de 15% y el conteo de 8-15 existen para acotar
+riesgo idiosincratico de una empresa; un ETF de indice ya es una canasta diversificada, asi
+que no aplica ninguno de los dos. No recomiendes recortar un ETF por "exceder el limite".
 - Revision obligatoria de tesis si una posicion cae -20% desde costo (no es venta
   automatica — es obligacion de volver a justificar)
 - Sin operaciones intradia

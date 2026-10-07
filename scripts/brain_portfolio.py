@@ -53,33 +53,42 @@ def main() -> int:
     print(f"Ganancia:         ${s.total_gain_usd:,.2f} ({s.total_gain_pct:+.2%})")
     print(f"Cash:             ${s.cash:,.2f}")
 
-    n = len(s.positions)
-    fit = "" if TARGET_MIN_POSITIONS <= n <= TARGET_MAX_POSITIONS else "  <- fuera del objetivo"
-    print(f"Posiciones:       {n} (objetivo Carlson: "
+    n_eq = len(s.equities)
+    fit = "" if TARGET_MIN_POSITIONS <= n_eq <= TARGET_MAX_POSITIONS else "  <- fuera del objetivo"
+    print(f"Acciones:         {n_eq} (objetivo Carlson: "
           f"{TARGET_MIN_POSITIONS}-{TARGET_MAX_POSITIONS}){fit}")
+    print(f"ETFs:             {len(s.etfs)} (no cuentan para la concentracion)")
 
     if not s.positions:
         print("\nSin posiciones.")
         return 0
 
-    print("\nPosiciones por peso al costo:")
-    over_limit = []
-    for p in sorted(s.positions, key=lambda x: -x.cost_basis):
+    def line(p, mark_limit: bool) -> str:
         w = s.weight_at_cost(p.ticker)
         flags = []
-        if w > MAX_POSITION_AT_COST:
+        if mark_limit and w > MAX_POSITION_AT_COST:
             flags.append("EXCEDE 15% AL COSTO")
-            over_limit.append(p.ticker)
         if p.gain_pct <= -20:
             flags.append("REVISION DE TESIS OBLIGATORIA (-20%)")
         suffix = "  [" + " | ".join(flags) + "]" if flags else ""
-        print(
+        return (
             f"  {p.ticker:6} {w:5.1%} costo | {p.quantity:>9.4f} @ ${p.avg_cost:8.2f} "
             f"-> ${p.price:8.2f}  {p.gain_pct:+7.2f}%  ${p.market_value:>9,.2f}{suffix}"
         )
 
+    if s.equities:
+        print("\nAcciones (sujetas al limite de 15% al costo):")
+        for p in sorted(s.equities, key=lambda x: -x.cost_basis):
+            print(line(p, mark_limit=True))
+
+    if s.etfs:
+        print("\nETFs (el limite de 15% no aplica — ya son canastas diversificadas):")
+        for p in sorted(s.etfs, key=lambda x: -x.cost_basis):
+            print(line(p, mark_limit=False))
+
+    over_limit = [p.ticker for p in s.equities if s.weight_at_cost(p.ticker) > MAX_POSITION_AT_COST]
     if over_limit:
-        print(f"\nPosiciones sobre el limite de 15% al costo: {', '.join(over_limit)}")
+        print(f"\nAcciones sobre el limite de 15% al costo: {', '.join(over_limit)}")
 
     review = [p.ticker for p in s.positions if p.gain_pct <= -20]
     if review:

@@ -1,52 +1,92 @@
 #!/usr/bin/env python3
 """
-Estado actual del portafolio — primer paso del ciclo diario del brain (ver src/agent/prompt.py,
-paso 1: "Revision diaria de posiciones existentes"). Invocado por bash desde la sesion
-programada de Cowork/Routine, no pensado para uso interactivo (aunque funciona igual).
+Estado actual del portafolio real de LP — primer paso de cada ciclo.
 
-Solo lectura — nunca escribe. La verdad viene de executed_trades/cash_events (ver
-src/reporting/portfolio.build_portfolio_state), nunca de lo que el brain crea recordar.
+Lee el CSV mas reciente que LP exporto de Schwab (data/portfolio-YYYY-MM-DD.csv).
+Solo lectura, nunca escribe.
+
+Si el snapshot esta viejo lo dice explicitamente: una tesis sobre un portafolio
+desactualizado es peor que ninguna.
 
 Uso:
     python scripts/brain_portfolio.py
+    python scripts/brain_portfolio.py --file data/portfolio-2026-09-24.csv
 """
 
+import argparse
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.guardrails import validator as v  # noqa: E402
-from src.reporting.portfolio import build_portfolio_state  # noqa: E402
+from src.data.portfolio_csv import (  # noqa: E402
+    STALE_AFTER_DAYS,
+    load_snapshot,
+)
+
+# Concentracion Carlson. El validator mantiene el limite duro de 15% al costo.
+TARGET_MIN_POSITIONS = 8
+TARGET_MAX_POSITIONS = 15
+MAX_POSITION_AT_COST = 0.15
 
 
-def main():
-    portfolio = build_portfolio_state()
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--file", help="CSV especifico; por defecto el mas reciente de data/")
+    args = ap.parse_args()
 
-    print(f"Cash: ${portfolio.cash:,.2f}")
-    print(f"Valor total (mercado): ${portfolio.total_value:,.2f}")
-    print(f"Valor total (costo): ${portfolio.total_cost_basis:,.2f}")
-    print(f"Posiciones: {len(portfolio.positions)} "
-          f"(objetivo: {v.TARGET_MIN_POSITIONS}-{v.TARGET_MAX_POSITIONS})\n")
+    try:
+        s = load_snapshot(Path(args.file) if args.file else None)
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
 
-    if not portfolio.positions:
-        print("Sin posiciones abiertas.")
-    else:
-        for p in sorted(portfolio.positions, key=lambda p: p.ticker):
-            pct_at_cost = (p.cost_basis / portfolio.total_cost_basis * 100
-                           if portfolio.total_cost_basis else 0.0)
-            flag = " [REVISION DE TESIS OBLIGATORIA]" if p.ticker in portfolio.flagged_for_review else ""
-            print(
-                f"  {p.ticker}: {p.quantity:g} @ ${p.avg_cost:.2f} costo -> ${p.current_price:.2f} "
-                f"actual ({p.unrealized_return_pct:+.1%}), {pct_at_cost:.1f}% de cartera al costo"
-                f"{flag}"
-            )
+    print(f"Portafolio al {s.as_of} (fuente: {s.source_file.name}, {s.age_days} dias)")
+    if s.is_stale:
+        print(
+            f"\n  *** SNAPSHOT VIEJO: {s.age_days} dias (umbral: {STALE_AFTER_DAYS}). "
+            "Decilo explicitamente en el reporte y pedile a LP un export nuevo. ***\n"
+        )
 
-    if portfolio.todays_trades:
-        print("\nOperaciones ya registradas hoy (no operar el mismo ticker en sentido contrario):")
-        for t in portfolio.todays_trades:
-            print(f"  {t['ticker']}: {t['action']}")
+    print(f"\nValor de mercado: ${s.total_market_value:,.2f}")
+    print(f"Costo:            ${s.total_cost_basis:,.2f}")
+    print(f"Ganancia:         ${s.total_gain_usd:,.2f} ({s.total_gain_pct:+.2%})")
+    print(f"Cash:             ${s.cash:,.2f}")
+
+    n = len(s.positions)
+    fit = "" if TARGET_MIN_POSITIONS <= n <= TARGET_MAX_POSITIONS else "  <- fuera del objetivo"
+    print(f"Posiciones:       {n} (objetivo Carlson: "
+          f"{TARGET_MIN_POSITIONS}-{TARGET_MAX_POSITIONS}){fit}")
+
+    if not s.positions:
+        print("\nSin posiciones.")
+        return 0
+
+    print("\nPosiciones por peso al costo:")
+    over_limit = []
+    for p in sorted(s.positions, key=lambda x: -x.cost_basis):
+        w = s.weight_at_cost(p.ticker)
+        flags = []
+        if w > MAX_POSITION_AT_COST:
+            flags.append("EXCEDE 15% AL COSTO")
+            over_limit.append(p.ticker)
+        if p.gain_pct <= -20:
+            flags.append("REVISION DE TESIS OBLIGATORIA (-20%)")
+        suffix = "  [" + " | ".join(flags) + "]" if flags else ""
+        print(
+            f"  {p.ticker:6} {w:5.1%} costo | {p.quantity:>9.4f} @ ${p.avg_cost:8.2f} "
+            f"-> ${p.price:8.2f}  {p.gain_pct:+7.2f}%  ${p.market_value:>9,.2f}{suffix}"
+        )
+
+    if over_limit:
+        print(f"\nPosiciones sobre el limite de 15% al costo: {', '.join(over_limit)}")
+
+    review = [p.ticker for p in s.positions if p.gain_pct <= -20]
+    if review:
+        print(f"Posiciones que exigen revision de tesis (-20% o peor): {', '.join(review)}")
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

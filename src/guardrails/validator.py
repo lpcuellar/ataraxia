@@ -46,7 +46,9 @@ from dataclasses import dataclass, field
 MAX_POSITION_PCT = 0.15
 THESIS_REVIEW_TRIGGER_PCT = -0.20
 TARGET_MIN_POSITIONS = 8
-TARGET_MAX_POSITIONS = 12
+# Concentracion Carlson: 8-15 nombres. Se cuenta solo sobre acciones — los ETFs de
+# indice ya son canastas diversificadas y no suman riesgo idiosincratico.
+TARGET_MAX_POSITIONS = 15
 DRAWDOWN_KILL_SWITCH_PCT = None  # None = desactivado (fase paper). Fase real: -0.25 a -0.30
 ALLOWED_ASSET_CLASSES = {"stock"}
 

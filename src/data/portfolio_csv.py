@@ -113,6 +113,37 @@ class PortfolioSnapshot:
         return 0.0
 
 
+def to_validator_state(snapshot: "PortfolioSnapshot"):
+    """
+    Adapta el snapshot del CSV al PortfolioState que espera src.guardrails.validator.
+
+    Asi los guardrails corren contra el portafolio real de LP y no contra el fondo
+    simulado — que es el punto del rediseño. Mantiene el principio "el LLM propone,
+    el codigo decide": el validador sigue siendo la autoridad sobre el tope de 15%.
+
+    Solo pasa las acciones: el tope de 15% al costo y el objetivo de 8-15 nombres
+    existen para acotar riesgo idiosincratico de una empresa, y un ETF de indice ya
+    es una canasta diversificada.
+    """
+    from src.guardrails.validator import Position as VPosition
+    from src.guardrails.validator import PortfolioState
+
+    return PortfolioState(
+        positions=[
+            VPosition(
+                ticker=p.ticker,
+                quantity=p.quantity,
+                avg_cost=p.avg_cost,
+                current_price=p.price,
+            )
+            for p in snapshot.equities
+        ],
+        cash=snapshot.cash,
+        todays_trades=[],  # el CSV es un snapshot, no trae operaciones del dia
+        flagged_for_review={p.ticker for p in snapshot.equities if p.gain_pct <= -20},
+    )
+
+
 def _to_float(raw: str | None) -> float:
     """'$1,121.37' -> 1121.37 | '-1.24%' -> -1.24 | '--' o '' -> 0.0"""
     if raw is None:

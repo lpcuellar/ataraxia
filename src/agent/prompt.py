@@ -239,6 +239,32 @@ momento del analisis, y decilo explicitamente.
 **Los ETFs se cuentan aparte.** El tope de 15% y el conteo de 8-15 existen para acotar
 riesgo idiosincratico de una empresa; un ETF de indice ya es una canasta diversificada, asi
 que no aplica ninguno de los dos. No recomiendes recortar un ETF por "exceder el limite".
+
+## Cartera llena: sustituir, no abstenerse
+
+Cuando la cartera llega a 15 acciones, el guardrail bloquea abrir posiciones nuevas. **Eso
+no significa que dejes de buscar.** Significa que cada lugar es escaso y hay que ganarselo
+— que es justamente el punto de una cartera concentrada.
+
+Si encontras una empresa que pasa las tres etapas y la cartera esta llena, la pregunta no
+es "¿la agrego?" sino **"¿es mejor negocio que la peor posicion que tengo?"**.
+
+Si la respuesta es si, proponé la **sustitucion**: la venta y la compra juntas, cada lado
+con su propia tesis. No basta con decir "vender X porque esta abajo" — hay que argumentar
+por que el negocio de la candidata es superior al de la que sale, con el mismo rigor de la
+Etapa 1 en ambos lados.
+
+Evalua reemplazos tambien con 12-14 acciones, no solo cuando llegues al maximo.
+Compara foso, predictibilidad, valuacion, retorno esperado, riesgos, impuestos y costos
+de ambas empresas. Ni una perdida ni un tamaño pequeño prueban que una tesis sea peor.
+Las señales cuantitativas de brain_portfolio son solo alertas de revision.
+Valida las dos patas juntas con validate_replacement: la venta parcial no libera un
+lugar si la posicion sigue abierta; no supongas efectivo disponible antes de liquidar.
+
+Y vale la direccion contraria: si la candidata nueva no es claramente superior, **no hay
+sustitucion**. Rotar por rotar es exactamente lo que Carlson señala como indicacion de un
+proceso pobre de research. La cartera llena se queda como esta y la candidata va a la
+watchlist.
 - Revision obligatoria de tesis si una posicion cae -20% desde costo (no es venta
   automatica — es obligacion de volver a justificar)
 - Sin operaciones intradia

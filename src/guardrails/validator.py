@@ -41,10 +41,15 @@ para no vender cuando la tesis se rompe.
 """
 
 from dataclasses import dataclass, field
+from copy import deepcopy
+import math
 
 
 MAX_POSITION_PCT = 0.15
 THESIS_REVIEW_TRIGGER_PCT = -0.20
+# Debajo de esto, una posicion es tan chica que no mueve el resultado aunque acierte —
+# candidata natural a ceder su lugar en una sustitucion.
+IMMATERIAL_POSITION_PCT = 0.02
 TARGET_MIN_POSITIONS = 8
 # Concentracion Carlson: 8-15 nombres. Se cuenta solo sobre acciones — los ETFs de
 # indice ya son canastas diversificadas y no suman riesgo idiosincratico.
@@ -79,6 +84,8 @@ class Position:
 class PortfolioState:
     positions: list[Position] = field(default_factory=list)
     cash: float = 0.0
+    etf_cost_basis: float = 0.0
+    etf_market_value: float = 0.0
     # Trades ya ejecutados HOY, para detectar same-day round-trips.
     # Cada uno: {"ticker": str, "action": "buy" | "sell"}
     todays_trades: list[dict] = field(default_factory=list)
@@ -88,11 +95,11 @@ class PortfolioState:
 
     @property
     def total_value(self) -> float:
-        return self.cash + sum(p.current_value for p in self.positions)
+        return self.cash + self.etf_market_value + sum(p.current_value for p in self.positions)
 
     @property
     def total_cost_basis(self) -> float:
-        return self.cash + sum(p.cost_basis for p in self.positions)
+        return self.cash + self.etf_cost_basis + sum(p.cost_basis for p in self.positions)
 
     def get_position(self, ticker: str) -> Position | None:
         for p in self.positions:
@@ -126,6 +133,72 @@ class GuardrailResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def weakest_position(portfolio: PortfolioState) -> Position | None:
+    """
+    La posicion con peor retorno no realizado — candidata natural a ceder su lugar.
+
+    Es una pista cuantitativa, no un veredicto: el codigo no sabe cual tesis se rompio.
+    Quien decide que sustituir es el analisis, comparando la calidad del negocio contra
+    la candidata nueva. Una posicion puede estar abajo y seguir siendo buena.
+    """
+    if not portfolio.positions:
+        return None
+    return min(portfolio.positions, key=lambda p: p.unrealized_return_pct)
+
+
+def substitution_candidates(
+    portfolio: PortfolioState, limit: int = 4
+) -> list[tuple[Position, str]]:
+    """
+    Posiciones que mas se prestan a ser sustituidas, con el motivo. Lista corta.
+
+    Tres señales, en orden de peso:
+      1. Tesis rota — cayo -20% o peor, el guardrail ya exige rejustificarla
+      2. Inmaterial — tan chica que no mueve el resultado aunque acierte
+      3. Rezagada — el peor retorno de la cartera
+
+    El peso se calcula sobre el costo de las posiciones, sin incluir el cash: una cartera
+    con mucho efectivo sin desplegar haria ver inmaterial a todo.
+
+    La lista se trunca a proposito. Si marca media cartera deja de ser una señal y pasa a
+    ser ruido — el objetivo es nombrar unas pocas candidatas reales, no ordenar todo por
+    retorno.
+
+    Ninguna señal es razon suficiente por si sola para vender. Son el punto de partida de
+    la pregunta: "¿esta candidata nueva es mejor negocio que esta posicion?". Si la
+    respuesta es no, no hay sustitucion — la cartera llena se queda como esta.
+    """
+    if not portfolio.positions:
+        return []
+
+    # Sin el cash: el denominador es lo invertido, no lo disponible.
+    invested = sum(p.cost_basis for p in portfolio.positions)
+    out: list[tuple[Position, str]] = []
+    seen: set[str] = set()
+
+    for p in sorted(portfolio.positions, key=lambda x: x.unrealized_return_pct):
+        if p.unrealized_return_pct <= THESIS_REVIEW_TRIGGER_PCT:
+            out.append((p, f"tesis en revision obligatoria ({p.unrealized_return_pct:+.1%})"))
+            seen.add(p.ticker)
+
+    if invested:
+        inmateriales = sorted(
+            (p for p in portfolio.positions
+             if p.ticker not in seen and p.cost_basis / invested < IMMATERIAL_POSITION_PCT),
+            key=lambda p: p.cost_basis,
+        )
+        for p in inmateriales:
+            w = p.cost_basis / invested
+            out.append((p, f"inmaterial: {w:.1%} del costo invertido, no mueve el resultado"))
+            seen.add(p.ticker)
+
+    worst = weakest_position(portfolio)
+    if worst is not None and worst.ticker not in seen:
+        out.append((worst, f"peor retorno de la cartera ({worst.unrealized_return_pct:+.1%})"))
+
+    return out[:limit]
+
+
 def validate_trade_proposal(proposal: TradeProposal, portfolio: PortfolioState) -> GuardrailResult:
     """Valida una propuesta de trade contra todos los guardrails aplicables.
     Debe correr ANTES de cualquier llamada a src/broker/ibkr_client.py, y se vuelve a correr
@@ -135,10 +208,10 @@ def validate_trade_proposal(proposal: TradeProposal, portfolio: PortfolioState) 
     if proposal.action not in ("buy", "sell"):
         return GuardrailResult(False, f"accion invalida: '{proposal.action}' (debe ser 'buy' o 'sell')")
 
-    if proposal.quantity <= 0:
+    if not math.isfinite(proposal.quantity) or proposal.quantity <= 0:
         return GuardrailResult(False, "la cantidad debe ser mayor a cero")
 
-    if proposal.price <= 0:
+    if not math.isfinite(proposal.price) or proposal.price <= 0:
         return GuardrailResult(False, "el precio debe ser mayor a cero")
 
     if not proposal.bear_case or not proposal.bear_case.strip():
@@ -207,10 +280,24 @@ def validate_trade_proposal(proposal: TradeProposal, portfolio: PortfolioState) 
 
     is_new_position = existing is None
     if is_new_position and len(portfolio.positions) >= TARGET_MAX_POSITIONS:
+        # La cartera llena no es un techo que impide mejorar: es lo que hace que cada
+        # lugar sea escaso. Si una candidata es claramente superior a la posicion mas
+        # debil, la salida es sustituir — proponer la venta y la compra juntas, cada una
+        # con su tesis. Lo que no se vale es agregar sin sacar.
+        weakest = weakest_position(portfolio)
+        hint = ""
+        if weakest is not None:
+            hint = (
+                f" Si {proposal.ticker} es superior a alguna posicion actual, proponé la "
+                f"sustitucion: vender primero y comprar despues, cada lado con su tesis. "
+                f"Candidata mas debil por retorno: {weakest.ticker} "
+                f"({weakest.unrealized_return_pct:+.1%})."
+            )
         return GuardrailResult(
             False,
             f"no se puede abrir una posicion nueva en {proposal.ticker}: la cartera ya tiene "
-            f"{len(portfolio.positions)} posiciones (maximo objetivo: {TARGET_MAX_POSITIONS})",
+            f"{len(portfolio.positions)} posiciones (maximo objetivo: {TARGET_MAX_POSITIONS})."
+            + hint,
         )
 
     # "Al costo", no a valor de mercado (ver PROJECT_PLAN.md Seccion 1 y el docstring de este
@@ -268,3 +355,32 @@ def check_drawdown_kill_switch(current_drawdown_pct: float) -> GuardrailResult:
         )
 
     return GuardrailResult(True, "drawdown dentro de limites")
+
+
+def validate_replacement(sell: TradeProposal, buy: TradeProposal,
+                         portfolio: PortfolioState, rationale: str,
+                         costs: float = 0.0) -> GuardrailResult:
+    """Simula venta -> compra sin modificar cartera ni ejecutar ordenes.
+
+    La aprobacion es mecanica y condicional a venta/liquidacion y precios indicados.
+    El texto comparativo debe justificarse con research; el codigo no certifica un foso.
+    """
+    if sell.action != "sell" or buy.action != "buy" or sell.ticker == buy.ticker:
+        return GuardrailResult(False, "Se requiere venta y compra de empresas distintas")
+    if not rationale.strip():
+        return GuardrailResult(False, "Falta tesis comparativa del reemplazo")
+    if not math.isfinite(costs) or costs < 0:
+        return GuardrailResult(False, "Costos/reserva fiscal invalidos")
+    result = validate_trade_proposal(sell, portfolio)
+    if not result.approved:
+        return result
+    simulated = deepcopy(portfolio)
+    held = simulated.get_position(sell.ticker)
+    held.quantity -= sell.quantity
+    simulated.positions = [p for p in simulated.positions if p.quantity > 0]
+    simulated.cash += sell.notional - costs
+    simulated.todays_trades.append({"ticker": sell.ticker, "action": "sell"})
+    result = validate_trade_proposal(buy, simulated)
+    if result.approved:
+        result.warnings.append("Simulacion: requiere venta confirmada, efectivo disponible, precios y costos verificados; no ejecuta ordenes")
+    return result

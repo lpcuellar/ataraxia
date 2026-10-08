@@ -18,6 +18,7 @@ reintentar con flush_pending_writes(), que conviene llamar al inicio de cada cor
 """
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -31,7 +32,14 @@ def get_connection():
     """Abre una conexion nueva a Supabase. No se reutiliza una conexion global porque el
     brain corre como un proceso de corta duracion (una sesion programada diaria), no un
     servidor de larga duracion."""
-    return psycopg2.connect(**require_db_config())
+    config = require_db_config()
+    config["connect_timeout"] = 10
+    if os.getenv("ATARAXIA_DRY_RUN") == "1":
+        config["options"] = "-c default_transaction_read_only=on -c statement_timeout=15000"
+    conn = psycopg2.connect(**config)
+    if os.getenv("ATARAXIA_DRY_RUN") == "1":
+        conn.set_session(readonly=True)
+    return conn
 
 
 def _execute(query: str, params: dict) -> None:
@@ -44,6 +52,18 @@ def _execute(query: str, params: dict) -> None:
         conn.close()
 
 
+def _dry_run() -> bool:
+    """
+    Modo dry-run, puesto por scripts/dry_run_check.py via entorno.
+
+    Se consulta ANTES de intentar la escritura, no despues: si solo bloquearamos la
+    conexion, el `except` de _write_with_fallback encolaria la escritura rechazada en
+    pending_db_writes/ y reapareceria en el proximo ciclo real. El modo de solo lectura
+    de Postgres no protege colas de archivos.
+    """
+    return os.environ.get("ATARAXIA_DRY_RUN") == "1"
+
+
 def _save_pending_write(kind: str, payload: dict) -> None:
     """Fallback cuando la escritura a Supabase falla: no se pierde el dato, se encola."""
     ts = time.strftime("%Y%m%dT%H%M%S")
@@ -52,6 +72,14 @@ def _save_pending_write(kind: str, payload: dict) -> None:
 
 
 def _write_with_fallback(kind: str, query: str, params: dict) -> None:
+    if _dry_run():
+        # Ruidoso a proposito: en dry-run ningun camino deberia intentar escribir. Si
+        # algo llega hasta aca, es un camino que el flag de run_cycle no cubrio y hay
+        # que verlo, no silenciarlo.
+        raise RuntimeError(
+            f"Escritura '{kind}' intentada en dry-run. Bloqueada antes del fallback: "
+            "no se encola en pending_db_writes/ para no reaparecer en el proximo ciclo real."
+        )
     try:
         _execute(query, params)
     except Exception as e:

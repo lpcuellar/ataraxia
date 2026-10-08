@@ -139,6 +139,8 @@ def to_validator_state(snapshot: "PortfolioSnapshot"):
             for p in snapshot.equities
         ],
         cash=snapshot.cash,
+        etf_cost_basis=sum(p.cost_basis for p in snapshot.etfs),
+        etf_market_value=sum(p.market_value for p in snapshot.etfs),
         todays_trades=[],  # el CSV es un snapshot, no trae operaciones del dia
         flagged_for_review={p.ticker for p in snapshot.equities if p.gain_pct <= -20},
     )

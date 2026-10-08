@@ -27,6 +27,7 @@ Uso:
 """
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -43,7 +44,7 @@ PY = str(REPO / "venv" / "bin" / "python")
 
 def _run(script: str, *args: str) -> None:
     """Corre un script del repo y deja que su salida fluya."""
-    subprocess.run([PY, str(REPO / "scripts" / script), *args], check=False)
+    subprocess.run([PY, str(REPO / "scripts" / script), *args], check=True, timeout=90)
 
 
 def _header(title: str) -> None:
@@ -54,7 +55,7 @@ def barrido(args: argparse.Namespace) -> int:
     """Flujo diario: estado, precios de la watchlist, y encolar. Sin tesis."""
     _header("BARRIDO DIARIO")
 
-    flushed = db.flush_pending_writes()
+    flushed = 0 if args.dry_run else db.flush_pending_writes()
     if flushed:
         print(f"Reenviadas {flushed} escritura(s) que habian quedado pendientes.\n")
 
@@ -65,7 +66,11 @@ def barrido(args: argparse.Namespace) -> int:
     _run("brain_watchlist.py", "--check-prices")
 
     _header("3. Encolar candidatos")
-    _run("brain_candidates.py", "--batch-size", str(args.batch_size))
+    if args.dry_run:
+        print("[dry-run] No se encola ni avanza la rotacion; se muestra la cola existente.")
+        _run("brain_candidates.py", "--show")
+    else:
+        _run("brain_candidates.py", "--batch-size", str(args.batch_size))
 
     _header("Cierre del barrido")
     pend = k.get_queue(limit=200)
@@ -79,7 +84,7 @@ def reporte(args: argparse.Namespace) -> int:
     """Flujo de lun/mie: toma 2-3 de la cola para analisis profundo."""
     _header("REPORTE — contexto para el analisis")
 
-    flushed = db.flush_pending_writes()
+    flushed = 0 if args.dry_run else db.flush_pending_writes()
     if flushed:
         print(f"Reenviadas {flushed} escritura(s) pendientes.\n")
 
@@ -162,7 +167,12 @@ def main() -> int:
                    help="Cuantos candidatos tomar de la cola (default 3)")
     p.set_defaults(func=reporte)
 
+    for command_parser in sub.choices.values():
+        command_parser.add_argument("--dry-run", action="store_true", help="Solo lectura: sin flush, encolado ni registro")
     args = ap.parse_args()
+    if args.dry_run:
+        os.environ["ATARAXIA_DRY_RUN"] = "1"
+        print("[dry-run] Contexto solamente. Sin analisis LLM, mensajes ni escrituras.", flush=True)
     return args.func(args)
 
 

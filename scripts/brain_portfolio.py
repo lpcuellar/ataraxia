@@ -94,6 +94,21 @@ def main() -> int:
     if review:
         print(f"Posiciones que exigen revision de tesis (-20% o peor): {', '.join(review)}")
 
+    if n_eq >= TARGET_MAX_POSITIONS:
+        from src.data.portfolio_csv import to_validator_state
+        from src.guardrails.validator import substitution_candidates
+
+        print(f"\n{'=' * 66}")
+        print(f"CARTERA LLENA ({n_eq}/{TARGET_MAX_POSITIONS} acciones)")
+        print("=" * 66)
+        print("Agregar un nombre nuevo exige sacar otro. Eso no es un techo: es lo que")
+        print("hace que cada lugar sea escaso y haya que ganarselo.\n")
+        print("Candidatas a ceder su lugar — punto de partida, no veredicto:")
+        for p, reason in substitution_candidates(to_validator_state(s)):
+            print(f"  {p.ticker:6} {reason}")
+        print("\nLa pregunta no es 'cual esta peor' sino '¿la candidata nueva es mejor")
+        print("negocio que esta posicion?'. Si la respuesta es no, no hay sustitucion.")
+
     return 0
 
 

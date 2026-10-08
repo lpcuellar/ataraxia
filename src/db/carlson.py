@@ -346,10 +346,16 @@ def log_portfolio_snapshot(
     )
 
 
-def get_snapshot_history(limit: int = 365) -> list[dict[str, Any]]:
+# El portafolio real empieza acá. Cualquier fila anterior es ruido de desarrollo:
+# ataraxia_brain no tiene DELETE por diseño, asi que se filtran en lectura.
+PORTFOLIO_EPOCH = date(2026, 1, 1)
+
+
+def get_snapshot_history(limit: int = 365, since: date | None = None) -> list[dict[str, Any]]:
     """La serie historica, mas antigua primero — lista para graficar."""
     rows = _query(
-        "select * from portfolio_snapshots order by as_of desc limit %(limit)s",
-        {"limit": limit},
+        "select * from portfolio_snapshots where as_of >= %(since)s "
+        "order by as_of desc limit %(limit)s",
+        {"limit": limit, "since": since or PORTFOLIO_EPOCH},
     )
     return list(reversed(rows))

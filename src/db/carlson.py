@@ -17,7 +17,7 @@ from typing import Any
 
 import psycopg2.extras
 
-from src.db.models import _write_with_fallback, get_connection
+from src.db.models import PORTFOLIO_EPOCH, _write_with_fallback, get_connection
 
 
 def _query(sql: str, params: dict | None = None) -> list[dict[str, Any]]:
@@ -346,9 +346,9 @@ def log_portfolio_snapshot(
     )
 
 
-# El portafolio real empieza acá. Cualquier fila anterior es ruido de desarrollo:
-# ataraxia_brain no tiene DELETE por diseño, asi que se filtran en lectura.
-PORTFOLIO_EPOCH = date(2026, 1, 1)
+# PORTFOLIO_EPOCH se movio a src/db/models.py (la capa baja, para tener una sola definicion
+# compartida con get_latest_snapshot sin ciclo de imports). Se reexporta aca porque este
+# modulo ya era su punto de uso y hay codigo que lo importa de aqui.
 
 
 def get_snapshot_history(limit: int = 365, since: date | None = None) -> list[dict[str, Any]]:

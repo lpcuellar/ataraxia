@@ -35,7 +35,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from src.data.portfolio_csv import load_snapshot  # noqa: E402
+from src.data.portfolio_csv import load_latest  # noqa: E402
 from src.db import carlson as k  # noqa: E402
 from src.db import models as db  # noqa: E402
 
@@ -92,7 +92,7 @@ def reporte(args: argparse.Namespace) -> int:
     _run("brain_portfolio.py")
 
     try:
-        s = load_snapshot()
+        s = load_latest()
         if s.is_stale:
             print(f"\n*** El CSV tiene {s.age_days} dias. Decilo explicitamente en el")
             print("    reporte y pedile a LP un export nuevo. ***")

@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.data.portfolio_csv import (  # noqa: E402
     STALE_AFTER_DAYS,
-    load_snapshot,
+    load_latest,
 )
 
 # Concentracion Carlson. El validator mantiene el limite duro de 15% al costo.
@@ -32,11 +32,16 @@ MAX_POSITION_AT_COST = 0.15
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--file", help="CSV especifico; por defecto el mas reciente de data/")
+    ap.add_argument("--file", help="CSV especifico; por defecto el snapshot de la DB")
+    ap.add_argument("--no-db", action="store_true",
+                    help="Ignora la DB y lee el CSV mas reciente de data/")
     args = ap.parse_args()
 
     try:
-        s = load_snapshot(Path(args.file) if args.file else None)
+        s = load_latest(
+            Path(args.file) if args.file else None,
+            prefer_db=not args.no_db,
+        )
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

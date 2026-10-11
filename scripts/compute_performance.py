@@ -25,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.data.portfolio_csv import load_snapshot  # noqa: E402
+from src.data.portfolio_csv import load_latest  # noqa: E402
 from src.db import carlson as k  # noqa: E402
 
 
@@ -109,7 +109,7 @@ def main() -> int:
         return show_history()
 
     try:
-        s = load_snapshot(Path(args.file) if args.file else None)
+        s = load_latest(Path(args.file) if args.file else None)
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

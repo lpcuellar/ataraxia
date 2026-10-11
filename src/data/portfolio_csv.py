@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
@@ -187,9 +188,118 @@ def latest_snapshot_path(data_dir: Path | None = None) -> Path | None:
     return candidates[-1]
 
 
+def load_snapshot_from_db() -> PortfolioSnapshot | None:
+    """
+    El snapshot mas reciente desde Supabase (portfolio_snapshots + portfolio_lots).
+
+    Devuelve la MISMA estructura que load_snapshot() para que todo lo que esta aguas abajo
+    — to_validator_state(), substitution_candidates(), los scripts brain_* — funcione sin
+    cambios, sin importar de donde salio el portafolio.
+
+    Las posiciones se agregan desde los lotes: una sola fuente de verdad, sin riesgo de que
+    el agregado y el detalle se contradigan. Devuelve None si no hay ningun snapshot cargado,
+    para que el caller pueda caer al CSV.
+    """
+    # Import perezoso a proposito: leer un CSV no deberia exigir credenciales de DB.
+    from src.db import models as db
+
+    header = db.get_latest_snapshot()
+    if not header:
+        return None
+
+    lots = db.get_snapshot_lots(header["id"])
+    if not lots:
+        return None
+
+    total_market_value = float(header["total_market_value"])
+    cash = float(header["cash"])
+    total_account = total_market_value + cash
+
+    by_ticker: dict[str, dict] = {}
+    for lot in lots:
+        agg = by_ticker.setdefault(lot["ticker"], {
+            "quantity": 0.0, "cost_basis": 0.0, "market_value": 0.0,
+            "price": 0.0, "asset_class": lot["asset_class"],
+        })
+        agg["quantity"] += float(lot["quantity"])
+        agg["cost_basis"] += float(lot["cost_basis"])
+        agg["market_value"] += float(lot["market_value"] or 0.0)
+        if lot["price_at_snapshot"] is not None:
+            agg["price"] = float(lot["price_at_snapshot"])
+
+    positions = []
+    for ticker, agg in by_ticker.items():
+        gain_usd = agg["market_value"] - agg["cost_basis"]
+        positions.append(Position(
+            ticker=ticker,
+            # El detalle de lotes de Schwab no trae el nombre de la empresa; el export de
+            # Positions si. No se inventa: queda vacio y nada depende de el para decidir.
+            description="",
+            quantity=agg["quantity"],
+            price=agg["price"],
+            market_value=agg["market_value"],
+            cost_basis=agg["cost_basis"],
+            gain_usd=gain_usd,
+            # OJO con la unidad: gain_pct va en PUNTOS PORCENTUALES (12.41), no en fraccion
+            # (0.1241), porque es lo que trae la columna "Gain %" de Schwab y es lo que
+            # comparan el trigger de revision de tesis (`gain_pct <= -20`) y la impresion de
+            # brain_portfolio. Devolver la fraccion aca hacia que el trigger de -20% no se
+            # disparara NUNCA, y una posicion en -29% pasaba sin flaggearse.
+            gain_pct=(gain_usd / agg["cost_basis"] * 100) if agg["cost_basis"] else 0.0,
+            # Misma unidad que gain_pct: puntos porcentuales, igual que la columna
+            # "% of Acct" del export de Schwab.
+            pct_of_account=(agg["market_value"] / total_account * 100) if total_account else 0.0,
+            # Se traduce a la etiqueta de Schwab para que Position.is_etf siga decidiendo con
+            # una sola logica, en vez de tener dos formas distintas de saber que es un ETF.
+            asset_type="ETFs & Closed End Funds" if agg["asset_class"] == "etf" else "Equity",
+        ))
+
+    positions.sort(key=lambda p: p.market_value, reverse=True)
+
+    return PortfolioSnapshot(
+        as_of=header["as_of"],
+        source_file=Path(f"supabase:portfolio_snapshots#{header['id']}"),
+        positions=positions,
+        cash=cash,
+        total_market_value=total_market_value,
+        total_cost_basis=float(header["total_cost_basis"]),
+    )
+
+
+def load_latest(path: Path | None = None, prefer_db: bool = True) -> PortfolioSnapshot:
+    """
+    El portafolio vigente: de la DB si hay, y si no del CSV mas reciente.
+
+    La DB manda por decision de LP (2026-10-11): los snapshots se versionan en Supabase en
+    vez de sobreescribir un archivo. El CSV queda como respaldo para cuando no hay red ni
+    credenciales — analizar un portafolio viejo es malo, pero menos malo que no correr, y
+    is_stale avisa de la antigüedad en los dos casos.
+
+    path fuerza un archivo concreto y salta la DB.
+    """
+    if path is not None:
+        return load_snapshot(path)
+
+    if prefer_db:
+        try:
+            snapshot = load_snapshot_from_db()
+        except Exception as exc:
+            print(
+                f"AVISO: no se pudo leer el portafolio de la DB ({exc}); se intenta con el "
+                f"CSV local, que puede estar mas viejo.",
+                file=sys.stderr,
+            )
+        else:
+            if snapshot is not None:
+                return snapshot
+
+    return load_snapshot()
+
+
 def load_snapshot(path: Path | None = None) -> PortfolioSnapshot:
     """
-    Carga el snapshot del portafolio. Sin argumento, toma el CSV mas reciente de data/.
+    Carga el snapshot desde un CSV. Sin argumento, toma el mas reciente de data/.
+    Para el flujo normal usa load_latest(), que prefiere la DB.
 
     Lanza FileNotFoundError si no hay ninguno — es mejor fallar ruidoso que analizar
     un portafolio que no existe.

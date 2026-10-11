@@ -20,12 +20,23 @@ reintentar con flush_pending_writes(), que conviene llamar al inicio de cada cor
 import json
 import os
 import time
+from datetime import date
 from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
 
 from src.config import PENDING_WRITES_DIR, require_db_config
+
+# El portafolio real empieza aca. Cualquier fila anterior es ruido de desarrollo (quedo un
+# snapshot de prueba con as_of 1999-01-01 y source_file 'probe.csv'): ataraxia_brain no tiene
+# DELETE por diseño, asi que se filtra en lectura.
+#
+# Esto NO es cosmetico: un snapshot de 1999 dentro de una serie de performance produce
+# retornos y drawdowns sin sentido, y el alpha relativo es el instrumento con el que se juzga
+# el proyecto entero. Vive aca, en la capa baja, porque src/db/carlson.py importa de este
+# modulo y no al revez — una sola definicion, sin ciclo de imports.
+PORTFOLIO_EPOCH = date(2026, 1, 1)
 
 
 def get_connection():
@@ -591,7 +602,12 @@ def insert_portfolio_snapshot(
 
 
 def get_latest_snapshot() -> dict | None:
-    """Cabecera del snapshot mas reciente, o None si no hay ninguno."""
+    """Cabecera del snapshot mas reciente, o None si no hay ninguno.
+
+    Filtra por PORTFOLIO_EPOCH igual que get_snapshot_history(): hoy el orden descendente
+    por as_of ya dejaria la fila de prueba de 1999 al final, pero el filtro es explicito para
+    que la condicion no dependa del ordenamiento de la consulta.
+    """
     conn = get_connection()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -599,9 +615,10 @@ def get_latest_snapshot() -> dict | None:
                 select id, as_of, source_file, total_market_value, total_cost_basis, cash,
                        equity_count, etf_count, sp500_close, created_at
                 from portfolio_snapshots
+                where as_of >= %(epoch)s
                 order by as_of desc
                 limit 1
-            """)
+            """, {"epoch": PORTFOLIO_EPOCH})
             row = cur.fetchone()
             return dict(row) if row else None
     finally:

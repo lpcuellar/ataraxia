@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.data import universe  # noqa: E402
-from src.data.portfolio_csv import load_snapshot  # noqa: E402
+from src.data.portfolio_csv import load_latest  # noqa: E402
 from src.db import carlson as k  # noqa: E402
 
 # Cuantos del universo se encolan por corrida. Chico a proposito: la cola se consume
@@ -80,7 +80,7 @@ def from_watchlist() -> int:
 def from_portfolio() -> int:
     """Posiciones propias que exigen revision de tesis."""
     try:
-        s = load_snapshot()
+        s = load_latest()
     except FileNotFoundError:
         print("  [portafolio] sin CSV — se omite")
         return 0

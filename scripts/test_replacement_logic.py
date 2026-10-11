@@ -4,7 +4,7 @@ from pathlib import Path
 from copy import deepcopy
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.guardrails.validator import *
-from src.data.portfolio_csv import load_snapshot, to_validator_state
+from src.data.portfolio_csv import load_latest, to_validator_state
 
 bc = dict(bear_case='Riesgo hipotetico de competencia', bear_case_probability=.2)
 p = PortfolioState([Position(f'T{i}', 10, 10, 10) for i in range(15)])
@@ -22,7 +22,7 @@ print('PASS: efectivo insuficiente y ausencia de tesis bloquean reemplazo')
 p.cash=1000
 assert not validate_replacement(sell,TradeProposal('NEW','buy',50,10,**bc),p,'Comparacion').approved
 print('PASS: reemplazo sigue respetando limite de 15%')
-s=load_snapshot(); v=to_validator_state(s)
+s=load_latest(); v=to_validator_state(s)
 assert len(v.positions)==len(s.equities)
 assert abs(v.total_cost_basis-(s.total_cost_basis+s.cash))<.01
 print('PASS: ETFs excluidos de conteo, incluidos en denominador de cartera real')

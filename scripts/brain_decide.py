@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import models as db  # noqa: E402
 from src.guardrails import validator as v  # noqa: E402
-from src.data.portfolio_csv import load_snapshot, to_validator_state  # noqa: E402
+from src.data.portfolio_csv import load_latest, to_validator_state  # noqa: E402
 
 
 def _today() -> str:
@@ -37,7 +37,7 @@ def _today() -> str:
 
 
 def cmd_propose(args):
-    portfolio = to_validator_state(load_snapshot())
+    portfolio = to_validator_state(load_latest())
     trade = v.TradeProposal(
         ticker=args.ticker,
         action=args.action,

@@ -5,6 +5,21 @@ Analista de inversiones de largo plazo que evalúa empresas con la filosofía de
 
 Trabaja sobre el portafolio real de LP (export de Schwab), no sobre paper money.
 
+**Propósito único: vencer al S&P 500 a largo plazo.** El retorno absoluto nunca es la métrica
+— +18% es fracaso si el índice hizo +25%. Si el alpha es consistentemente negativo, la
+conclusión correcta es liquidar y pasar a indexación pasiva.
+
+## Documentación
+
+- [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) — misión, métricas, guardrails no
+  negociables, decisiones de estrategia y producto.
+- [`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md) — roadmap técnico, stack, estado real de cada
+  pieza, riesgos cerrados y lecciones operativas.
+
+Los dos viven dentro del repo desde el 2026-10-11, para que se actualicen en el mismo commit
+que el cambio que documentan. Antes estaban fuera y se desactualizaron dos veces en cuatro
+días.
+
 ## El marco de evaluación
 
 Tres etapas, en orden fijo. Carlson es explícito: el foso se establece **antes** de mirar

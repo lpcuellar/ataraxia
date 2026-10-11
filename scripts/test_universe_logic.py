@@ -28,16 +28,25 @@ def check(label: str, condition: bool):
 
 failures = 0
 
-# --- Test 1: interseccion basica ---
-sp500 = [{"symbol": "AAPL"}, {"symbol": "MSFT"}, {"symbol": "NVDA"}, {"symbol": "TSLA"}]
-screener = [{"symbol": "AAPL"}, {"symbol": "NVDA"}, {"symbol": "COST"}]  # COST no esta en sp500 mock, TSLA no paso el screener
-pool = build_quantitative_pool(sp500, screener)
-check("Interseccion devuelve solo lo que esta en ambas listas", pool == ["AAPL", "NVDA"])
+# --- Test 1: el pool son los resultados del screener, sin exigir pertenencia a un indice ---
+# (decision 2026-10-11: el universo ya no se restringe al S&P 500)
+screener = [{"symbol": "AAPL"}, {"symbol": "NVDA"}, {"symbol": "COST"}]
+pool = build_quantitative_pool(screener)
+check("Sin indice, el pool es todo lo que paso el screener", pool == ["AAPL", "COST", "NVDA"])
 check("Pool esta ordenado alfabeticamente", pool == sorted(pool))
 
-# --- Test 2: interseccion vacia no revienta ---
-empty_pool = build_quantitative_pool([], [])
-check("Pool vacio con inputs vacios no lanza excepcion", empty_pool == [])
+# --- Test 1b: un ticker fuera de cualquier indice sigue siendo elegible ---
+check("Un nombre fuera del S&P 500 entra al pool",
+      build_quantitative_pool([{"symbol": "ZETA"}]) == ["ZETA"])
+
+# --- Test 1c: si se revierte la decision, el filtro por indice vuelve a funcionar ---
+index_members = [{"symbol": "AAPL"}, {"symbol": "MSFT"}, {"symbol": "NVDA"}]
+check("Con indice explicito se intersecta y COST queda fuera",
+      build_quantitative_pool(screener, index_members) == ["AAPL", "NVDA"])
+
+# --- Test 2: entradas vacias no revientan ---
+check("Pool vacio con input vacio no lanza excepcion", build_quantitative_pool([]) == [])
+check("Pool vacio con indice vacio tampoco", build_quantitative_pool([], []) == [])
 
 # --- Test 3: rotacion basica sin dar la vuelta ---
 big_pool = [f"T{i}" for i in range(10)]

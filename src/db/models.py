@@ -18,6 +18,7 @@ reintentar con flush_pending_writes(), que conviene llamar al inicio de cada cor
 """
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -31,7 +32,14 @@ def get_connection():
     """Abre una conexion nueva a Supabase. No se reutiliza una conexion global porque el
     brain corre como un proceso de corta duracion (una sesion programada diaria), no un
     servidor de larga duracion."""
-    return psycopg2.connect(**require_db_config())
+    config = require_db_config()
+    config["connect_timeout"] = 10
+    if os.getenv("ATARAXIA_DRY_RUN") == "1":
+        config["options"] = "-c default_transaction_read_only=on -c statement_timeout=15000"
+    conn = psycopg2.connect(**config)
+    if os.getenv("ATARAXIA_DRY_RUN") == "1":
+        conn.set_session(readonly=True)
+    return conn
 
 
 def _execute(query: str, params: dict) -> None:
@@ -44,6 +52,18 @@ def _execute(query: str, params: dict) -> None:
         conn.close()
 
 
+def _dry_run() -> bool:
+    """
+    Modo dry-run, puesto por scripts/dry_run_check.py via entorno.
+
+    Se consulta ANTES de intentar la escritura, no despues: si solo bloquearamos la
+    conexion, el `except` de _write_with_fallback encolaria la escritura rechazada en
+    pending_db_writes/ y reapareceria en el proximo ciclo real. El modo de solo lectura
+    de Postgres no protege colas de archivos.
+    """
+    return os.environ.get("ATARAXIA_DRY_RUN") == "1"
+
+
 def _save_pending_write(kind: str, payload: dict) -> None:
     """Fallback cuando la escritura a Supabase falla: no se pierde el dato, se encola."""
     ts = time.strftime("%Y%m%dT%H%M%S")
@@ -52,6 +72,14 @@ def _save_pending_write(kind: str, payload: dict) -> None:
 
 
 def _write_with_fallback(kind: str, query: str, params: dict) -> None:
+    if _dry_run():
+        # Ruidoso a proposito: en dry-run ningun camino deberia intentar escribir. Si
+        # algo llega hasta aca, es un camino que el flag de run_cycle no cubrio y hay
+        # que verlo, no silenciarlo.
+        raise RuntimeError(
+            f"Escritura '{kind}' intentada en dry-run. Bloqueada antes del fallback: "
+            "no se encola en pending_db_writes/ para no reaparecer en el proximo ciclo real."
+        )
     try:
         _execute(query, params)
     except Exception as e:
@@ -476,3 +504,122 @@ values (%(date)s, %(event_type)s, %(amount)s, %(note)s)
 def record_cash_event(date: str, event_type: str, amount: float, note: str | None = None) -> None:
     payload = dict(date=date, event_type=event_type, amount=amount, note=note)
     _write_with_fallback("cash_event", _INSERT_CASH_EVENT, payload)
+
+
+# ---------------------------------------------------------------------------
+# Snapshots del portafolio real con detalle de lotes
+# (migracion 20261011180000_portfolio_lots.sql)
+#
+# A diferencia de los log_*, estas escrituras NO usan _write_with_fallback: cargar un
+# snapshot es una accion deliberada que LP dispara a mano, no un efecto secundario de una
+# corrida automatica. Si falla, tiene que fallar a la vista para que se reintente — no
+# quedar encolado en data/pending_db_writes/ dando la impresion de que ya se guardo.
+# ---------------------------------------------------------------------------
+
+_INSERT_SNAPSHOT = """
+insert into portfolio_snapshots
+    (as_of, source_file, total_market_value, total_cost_basis, cash,
+     equity_count, etf_count, sp500_close)
+values
+    (%(as_of)s, %(source_file)s, %(total_market_value)s, %(total_cost_basis)s, %(cash)s,
+     %(equity_count)s, %(etf_count)s, %(sp500_close)s)
+returning id
+"""
+
+_INSERT_LOT = """
+insert into portfolio_lots
+    (snapshot_id, ticker, asset_class, open_date, quantity, cost_per_share, cost_basis,
+     price_at_snapshot, market_value, holding_period)
+values
+    (%(snapshot_id)s, %(ticker)s, %(asset_class)s, %(open_date)s, %(quantity)s,
+     %(cost_per_share)s, %(cost_basis)s, %(price_at_snapshot)s, %(market_value)s,
+     %(holding_period)s)
+"""
+
+
+def snapshot_exists(as_of: str) -> bool:
+    """as_of es unique en portfolio_snapshots — saberlo antes evita que el cargador reviente
+    a mitad de camino con un error de constraint."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select 1 from portfolio_snapshots where as_of = %(as_of)s",
+                {"as_of": as_of},
+            )
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def insert_portfolio_snapshot(
+    as_of: str,
+    source_file: str,
+    total_market_value: float,
+    total_cost_basis: float,
+    cash: float,
+    equity_count: int,
+    etf_count: int,
+    lots: list[dict],
+    sp500_close: float | None = None,
+) -> int:
+    """Inserta el snapshot y todos sus lotes en UNA transaccion. Devuelve el id.
+
+    Atomico a proposito: un snapshot a medias (cabecera sin lotes, o la mitad de los lotes)
+    seria un portafolio que nunca existio, y el brain lo leeria como verdad.
+    """
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(_INSERT_SNAPSHOT, dict(
+                    as_of=as_of,
+                    source_file=source_file,
+                    total_market_value=total_market_value,
+                    total_cost_basis=total_cost_basis,
+                    cash=cash,
+                    equity_count=equity_count,
+                    etf_count=etf_count,
+                    sp500_close=sp500_close,
+                ))
+                snapshot_id = cur.fetchone()[0]
+                for lot in lots:
+                    cur.execute(_INSERT_LOT, {**lot, "snapshot_id": snapshot_id})
+        return snapshot_id
+    finally:
+        conn.close()
+
+
+def get_latest_snapshot() -> dict | None:
+    """Cabecera del snapshot mas reciente, o None si no hay ninguno."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                select id, as_of, source_file, total_market_value, total_cost_basis, cash,
+                       equity_count, etf_count, sp500_close, created_at
+                from portfolio_snapshots
+                order by as_of desc
+                limit 1
+            """)
+            row = cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_snapshot_lots(snapshot_id: int) -> list[dict]:
+    """Lotes de un snapshot, ordenados por ticker y fecha de compra descendente."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+                select ticker, asset_class, open_date, quantity, cost_per_share, cost_basis,
+                       price_at_snapshot, market_value, holding_period
+                from portfolio_lots
+                where snapshot_id = %(snapshot_id)s
+                order by ticker, open_date desc
+            """, {"snapshot_id": snapshot_id})
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()

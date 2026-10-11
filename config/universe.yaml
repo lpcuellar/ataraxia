@@ -1,19 +1,35 @@
 # Universo de candidatos de Ataraxia — embudo de dos etapas (ver BUILD_PLAN.md)
 #
-# Etapa 1 (filtro cuantitativo, sin juicio humano): se genera programáticamente a partir de
-# los constituyentes del S&P 500 aplicando cortes objetivos. No se edita a mano este archivo
+# Etapa 1 (filtro cuantitativo, sin juicio humano): se genera programáticamente aplicando
+# cortes objetivos sobre las acciones listadas en EE.UU. No se edita a mano este archivo
 # para "elegir favoritos" — el pool completo se regenera por código en src/data/.
 #
 # Etapa 2 (lote rotativo): cada semana se selecciona un subconjunto del pool para research
 # profundo. El estado de qué se ha revisado y cuándo vive en la base de datos, no aquí.
+#
+# DECISIÓN 2026-10-11 (LP): la pertenencia al S&P 500 deja de ser criterio de elegibilidad.
+# Buscar alpha contra el S&P 500 eligiendo solo dentro del S&P 500 obliga a que el alpha
+# venga de ponderación y timing, nunca de selección — contradice la misión del proyecto.
+#
+# El piso baja de $10B a $2B. Se evaluó $1B y se descartó con datos: bajo $1B hay 3,060
+# nombres (53% del universo), de los cuales 23% es biotech en fase clínica sin producto y
+# 18% son bancos comunitarios o vehículos tipo SPAC. La estimación honesta es que solo 2-5%
+# pasaría un test serio de foso, y de esos buena parte tiene el mercado estructuralmente
+# limitado — foso sin pista no compone. Bajar de $2B a $1B sumaba 555 nombres al pool sin
+# subir la tasa de acierto, mientras el costo de investigar cada uno es el mismo.
+#
+# El terreno fértil es el mid cap ($2B-$50B, ~1,824 nombres): negocios reales con historia
+# financiera, menos saturados de analistas que las mega caps, y estructuralmente
+# subrepresentados en un índice ponderado por capitalización.
 
 filtros_cuantitativos:
-  market_cap_minimo_usd: 10000000000   # $10B — evita micro/small caps ilíquidas
-  cobertura_analistas_minima: 5        # al menos 5 analistas cubriendo el ticker
-  indice_base: "S&P 500"               # fuente del universo elegible
+  market_cap_minimo_usd: 2000000000    # $2B (dos mil millones) — mid cap hacia arriba
+  cobertura_analistas_minima: 3        # bajado de 5: exigir 5 sesga a nombres ya seguidos
+  requiere_pertenencia_indice: false   # reemplaza indice_base — ya no se filtra por índice
+  solo_listadas_en_eeuu: true          # sin ADRs internacionales por ahora (decisión abierta)
 
 lote_rotativo:
-  tickers_nuevos_por_semana: 18
+  tickers_nuevos_por_semana: 8         # bajado de 18: el ciclo de lun/mié moría por timeout
   revision_diaria_de_holdings_actuales: true   # siempre, independiente del lote rotativo
 
 # Placeholder — se genera y actualiza por código, no manualmente:

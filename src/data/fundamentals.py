@@ -149,6 +149,91 @@ def get_sp500_with_market_cap() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Universo ancho — decision de LP del 2026-10-11: la pertenencia al S&P 500 deja de ser
+# criterio de elegibilidad (ver config/universe.yaml). Hace falta una lista base que no sea
+# un indice.
+#
+# Por que el screener de Nasdaq y no otra cosa:
+#   - El API de screener de stockanalysis.com esta detras de Cloudflare (verificado el
+#     2026-10-11: devuelve el challenge "Just a moment..."). Su pagina de lista del S&P 500
+#     si es HTML plano, por eso get_sp500_with_market_cap() sigue funcionando.
+#   - El CSV de holdings de iShares (IWV/Russell 3000) devuelve una interstitial HTML en vez
+#     del archivo cuando se pide por curl (verificado el 2026-10-11).
+#   - api.nasdaq.com/api/screener/stocks responde JSON limpio con symbol, name, marketCap,
+#     country, sector e industry para ~7,000 acciones listadas en EE.UU. Requiere un
+#     User-Agent de navegador; con el UA genérico del bot responde 403.
+# ---------------------------------------------------------------------------
+
+NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks"
+
+# El screener incluye units, warrants y acciones preferentes, que no son negocios
+# investigables (p.ej. "ABCDU", "XYZ.WS"). Un ticker de 1-5 letras sin sufijos los excluye.
+_PLAIN_TICKER_RE = re.compile(r"[A-Z]{1,5}\Z")
+
+
+def get_us_stocks_with_market_cap(us_only: bool = True) -> list[dict]:
+    """Acciones listadas en EE.UU. con market cap, via el screener de Nasdaq.
+
+    Reemplaza a get_sp500_with_market_cap() como lista base del embudo: el universo ya no se
+    restringe a un indice. Se consulta una vez cada ~30 dias (ver refresh_pool_if_stale),
+    no en volumen.
+
+    us_only=True deja fuera a las extranjeras listadas en EE.UU. (ADRs), coherente con
+    `solo_listadas_en_eeuu` en config/universe.yaml. Cambiar esa decision es cambiar el
+    flag, no el codigo.
+
+    Devuelve las mismas claves que build_quantitative_pool() ya espera ("symbol",
+    "marketCap"), mas "name", "country" y "sector"."""
+    def fetch():
+        resp = requests.get(
+            NASDAQ_SCREENER_URL,
+            params={"tableonly": "true", "limit": 10000, "offset": 0, "download": "true"},
+            headers={
+                # UA de navegador a proposito: con el UA del bot este endpoint responde 403.
+                "User-Agent": (
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        rows = resp.json().get("data", {}).get("rows") or []
+        if len(rows) < 4000:
+            raise RuntimeError(
+                f"El screener de Nasdaq devolvio solo {len(rows)} filas (esperado ~7,000). "
+                f"El endpoint probablemente cambio de formato o esta limitando — revisar "
+                f"get_us_stocks_with_market_cap() en src/data/fundamentals.py antes de "
+                f"confiar en un pool incompleto."
+            )
+
+        out = []
+        for row in rows:
+            symbol = (row.get("symbol") or "").strip().upper()
+            if not _PLAIN_TICKER_RE.match(symbol):
+                continue
+            if us_only and (row.get("country") or "") != "United States":
+                continue
+            try:
+                market_cap = float((row.get("marketCap") or "").strip())
+            except (TypeError, ValueError):
+                continue  # sin market cap no se puede filtrar; queda fuera
+            if market_cap <= 0:
+                continue
+            out.append({
+                "symbol": symbol,
+                "name": (row.get("name") or "").strip(),
+                "marketCap": int(market_cap),
+                "country": row.get("country"),
+                "sector": row.get("sector"),
+            })
+        return out
+
+    return cached_call("us_stocks_with_market_cap", {"us_only": us_only}, fetch)
+
+
+# ---------------------------------------------------------------------------
 # Sustituto de analyst-estimates mientras siga bloqueado por ticker en el plan actual de FMP
 # (402 "Premium Query Parameter", verificado el 26 de agosto de 2026).
 # ---------------------------------------------------------------------------

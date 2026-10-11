@@ -218,9 +218,15 @@ def run():
     check("Trigger de revision detecta exactamente las posiciones en -20% o peor",
           set(triggered) == {"DOWN20", "DOWN30"})
 
-    # --- kill-switch de drawdown desactivado en paper trading ---
-    result = v.check_drawdown_kill_switch(-0.50)  # incluso un drawdown enorme
-    check("Kill-switch de drawdown esta desactivado en fase paper (siempre aprueba)", result.approved)
+    # --- kill-switch de drawdown ACTIVO en -30% (decision de LP 2026-10-11) ---
+    check("Kill-switch esta configurado, no en None", v.DRAWDOWN_KILL_SWITCH_PCT == -0.30)
+    check("Drawdown del 50% dispara el kill-switch",
+          not v.check_drawdown_kill_switch(-0.50).approved)
+    check("Drawdown exactamente en el umbral (-30%) dispara",
+          not v.check_drawdown_kill_switch(-0.30).approved)
+    check("Drawdown del 25% NO dispara (ruido esperado en cartera concentrada)",
+          v.check_drawdown_kill_switch(-0.25).approved)
+    check("Sin drawdown, aprueba", v.check_drawdown_kill_switch(0.0).approved)
 
     print("\nTodos los tests de logica pura del validator pasaron.")
 

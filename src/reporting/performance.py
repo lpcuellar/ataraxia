@@ -12,10 +12,18 @@ entrado ese dia). Correcto y suficiente para una cuenta que arranca con un solo 
 (el caso actual); si el fondeo se vuelve mas complejo (varios depositos grandes en fechas
 distintas) esto subestima o sobreestima el benchmark segun el timing — revisar entonces.
 
-Sharpe ratio asume una tasa libre de riesgo de 0% — razonable como simplificacion para una
-ventana corta de paper trading, no para evaluar la estrategia contra bonos en el largo plazo.
-Requiere al menos MIN_POINTS_FOR_SHARPE puntos de historico (incluyendo el de hoy) para que
-el desvio estandar signifique algo; devuelve None si no hay suficientes.
+Sharpe ratio asume una tasa libre de riesgo de 0% — simplificacion aceptable mientras la
+serie de historico sea corta, pero NO para juzgar la estrategia contra bonos en el largo
+plazo, que es justamente el horizonte en el que se evalua el proyecto. Revisar cuando haya
+suficiente historico para que la comparacion importe. Requiere al menos
+MIN_POINTS_FOR_SHARPE puntos (incluyendo el de hoy) para que el desvio estandar signifique
+algo; devuelve None si no hay suficientes.
+
+Alcance de la medicion (decision de LP, 2026-10-11): el alpha de Ataraxia se mide SOLO sobre
+las equities del portafolio, no sobre los ETFs amplios (VOO/SCHD/VXUS). Esos son ancla
+pasiva fuera del mandato del agente, y VOO *es* el benchmark — incluirlos arrastraria la
+medicion hacia el indice y escondería el aporte real del agente. Ver asset_class en
+portfolio_lots (migracion 20261011180000) y LotSnapshot.equities_only().
 """
 
 import statistics

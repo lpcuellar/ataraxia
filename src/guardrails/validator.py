@@ -28,8 +28,8 @@ Guardrails implementados aqui (fuente de verdad: PROJECT_PLAN.md Seccion 1):
     de que algo haya escrito un flag en la DB primero — se resuelve solo si el precio se
     recupera). check_thesis_review_triggers() sigue disponible como el chequeo diario no
     bloqueante que reporta todas las posiciones flaggeadas, no solo la que se esta comprando.
-  - Kill-switch de drawdown: desactivado durante paper trading -> check_drawdown_kill_switch
-    (DRAWDOWN_KILL_SWITCH_PCT = None mientras estemos en paper; se activa en Fase 6)
+  - Kill-switch de drawdown: ACTIVO en -30% -> check_drawdown_kill_switch
+    (activado por decision de LP el 2026-10-11; ver nota abajo)
 
 Nota de diseño — por que el minimo de 8 posiciones NO es un bloqueo duro:
 PROJECT_PLAN.md es explicito en que el control de riesgo real esta atado a la tesis, "no a
@@ -54,7 +54,19 @@ TARGET_MIN_POSITIONS = 8
 # Concentracion Carlson: 8-15 nombres. Se cuenta solo sobre acciones — los ETFs de
 # indice ya son canastas diversificadas y no suman riesgo idiosincratico.
 TARGET_MAX_POSITIONS = 15
-DRAWDOWN_KILL_SWITCH_PCT = None  # None = desactivado (fase paper). Fase real: -0.25 a -0.30
+# Kill-switch de drawdown a nivel fondo. ACTIVO desde el 2026-10-11 por decision de LP.
+#
+# Por que -0.30 y no -0.25: la cartera objetivo son 8-15 nombres concentrados. Con esa
+# concentracion un drawdown del 25% entra dentro del rango de ruido normal de un mercado
+# bajista, y un kill-switch que se dispara por ruido es peor que no tenerlo — detiene al
+# agente exactamente cuando las oportunidades son mejores. -30% deja margen para la
+# volatilidad esperada y reserva el freno para un escenario que de verdad indica que algo
+# esta roto.
+#
+# Que hace y que NO hace: bloquea COMPRAS nuevas a nivel fondo. No liquida nada ni fuerza
+# ventas — eso seria la regla ciega que PROJECT_PLAN.md rechaza explicitamente. El control
+# de riesgo por posicion sigue siendo el trigger de revision de tesis a -20%.
+DRAWDOWN_KILL_SWITCH_PCT = -0.30
 ALLOWED_ASSET_CLASSES = {"stock"}
 
 
@@ -338,14 +350,16 @@ def check_thesis_review_triggers(portfolio: PortfolioState) -> list[str]:
 
 
 def check_drawdown_kill_switch(current_drawdown_pct: float) -> GuardrailResult:
-    """Chequeo a nivel fondo, no por-trade. Durante paper trading DRAWDOWN_KILL_SWITCH_PCT es
-    None, asi que esto siempre aprueba (el drawdown solo se monitorea, ver PROJECT_PLAN.md
-    Seccion 1). Se activa unicamente en Fase 6 con capital real.
+    """Chequeo a nivel fondo, no por-trade. ACTIVO desde el 2026-10-11 en -30% (ver
+    DRAWDOWN_KILL_SWITCH_PCT). Bloquea compras nuevas; nunca fuerza ventas.
+
+    Se conserva el caso None para poder desactivarlo cambiando una constante, sin tocar la
+    logica — pero ya no es el estado por defecto.
 
     current_drawdown_pct se espera negativo o cero (p.ej. -0.12 para un drawdown del 12%).
     """
     if DRAWDOWN_KILL_SWITCH_PCT is None:
-        return GuardrailResult(True, "kill-switch de drawdown desactivado (fase paper trading)")
+        return GuardrailResult(True, "kill-switch de drawdown desactivado por configuracion")
 
     if current_drawdown_pct <= DRAWDOWN_KILL_SWITCH_PCT:
         return GuardrailResult(

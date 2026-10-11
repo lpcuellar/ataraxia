@@ -45,17 +45,27 @@ ROTATION_STATE_FILE = DATA_DIR / "rotation_state.json"
 # ---------------------------------------------------------------------------
 
 def build_quantitative_pool(
-    sp500_constituents: list[dict],
     screener_results: list[dict],
+    index_constituents: list[dict] | None = None,
 ) -> list[str]:
-    """Etapa 1: interseccion de constituyentes del S&P 500 con el resultado del screener
-    (ya filtrado por market cap minimo). Devuelve una lista ordenada alfabeticamente para
+    """Etapa 1: el pool son los tickers que pasaron el corte cuantitativo (market cap
+    minimo ya aplicado por el llamador). Devuelve una lista ordenada alfabeticamente para
     que el orden sea determinista y auditable, no dependiente del orden de respuesta de la
-    API."""
-    sp500_tickers = {row["symbol"] for row in sp500_constituents if "symbol" in row}
+    fuente.
+
+    DECISION 2026-10-11 (LP): la pertenencia a un indice dejo de ser criterio de
+    elegibilidad. Antes esta funcion interseptaba el screener con los constituyentes del
+    S&P 500, lo que limitaba estructuralmente la diferenciacion frente al indice al que hay
+    que ganarle — el alpha solo podia venir de ponderacion y timing, nunca de seleccion.
+
+    index_constituents queda como parametro opcional y solo se aplica si
+    `requiere_pertenencia_indice` esta en true en config/universe.yaml. Se conserva para no
+    perder la capacidad de volver a un universo indexado si la decision se revierte."""
     screener_tickers = {row["symbol"] for row in screener_results if "symbol" in row}
-    pool = sorted(sp500_tickers & screener_tickers)
-    return pool
+    if index_constituents is not None:
+        index_tickers = {row["symbol"] for row in index_constituents if "symbol" in row}
+        screener_tickers &= index_tickers
+    return sorted(screener_tickers)
 
 
 def select_next_batch(
@@ -143,8 +153,9 @@ def _load_universe_config() -> dict:
 
 
 def refresh_pool_if_stale(state: RotationState, refresh_interval_days: int = 30) -> RotationState:
-    """Los constituyentes del S&P 500 cambian pocas veces al año — no hace falta re-consultar
-    la API cada dia. Solo refresca si el pool esta vacio o ya pasaron refresh_interval_days."""
+    """El universo elegible cambia despacio (altas/bajas de listado, empresas que cruzan el
+    piso de market cap) — no hace falta re-consultar la fuente cada dia. Solo refresca si el
+    pool esta vacio o ya pasaron refresh_interval_days."""
     needs_refresh = state.pool_last_refreshed is None
     if not needs_refresh:
         last = date.fromisoformat(state.pool_last_refreshed)
@@ -152,13 +163,20 @@ def refresh_pool_if_stale(state: RotationState, refresh_interval_days: int = 30)
 
     if needs_refresh:
         config = _load_universe_config()
-        min_cap = config["filtros_cuantitativos"]["market_cap_minimo_usd"]
-        # sp500-constituent y company-screener (FMP) estan bloqueados en el plan actual (402
-        # "Restricted Endpoint", verificado el 26 de agosto de 2026) — get_sp500_with_market_
-        # cap() cubre ambos de una: constituyentes del S&P 500 + market cap real por ticker,
-        # via scraping de stockanalysis.com (ver src/data/fundamentals.py).
-        constituents = fundamentals.get_sp500_with_market_cap()
-        screener_results = [row for row in constituents if row.get("marketCap", 0) >= min_cap]
+        filtros = config["filtros_cuantitativos"]
+        min_cap = filtros["market_cap_minimo_usd"]
+        us_only = filtros.get("solo_listadas_en_eeuu", True)
+        requires_index = filtros.get("requiere_pertenencia_indice", False)
+
+        # Lista base: acciones listadas en EE.UU. via el screener de Nasdaq. Ya no se parte
+        # de un indice — ver build_quantitative_pool() y la decision del 2026-10-11.
+        candidates = fundamentals.get_us_stocks_with_market_cap(us_only=us_only)
+        screener_results = [row for row in candidates if row.get("marketCap", 0) >= min_cap]
+
+        # Solo si se revierte la decision y se vuelve a exigir pertenencia a un indice.
+        index_constituents = (
+            fundamentals.get_sp500_with_market_cap() if requires_index else None
+        )
 
         # Anclar la rotacion al ticker donde ibamos ANTES de pisar el pool viejo — refrescar
         # el pool (verificacion periodica, no un evento raro) no deberia por si solo perder
@@ -169,7 +187,7 @@ def refresh_pool_if_stale(state: RotationState, refresh_interval_days: int = 30)
             else None
         )
 
-        state.pool = build_quantitative_pool(constituents, screener_results)
+        state.pool = build_quantitative_pool(screener_results, index_constituents)
         state.pool_last_refreshed = date.today().isoformat()
 
         if anchor_ticker and anchor_ticker in state.pool:

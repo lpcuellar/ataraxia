@@ -141,12 +141,18 @@ def reporte(args: argparse.Namespace) -> int:
             if "news" in pkg_summary:
                 pkg_summary["news"] = pkg_summary["news"][:5]
             print(json.dumps(pkg_summary, ensure_ascii=False, indent=2, default=str))
-            # Imprimir el 10-K por separado, etiquetado
-            if pkg.get("filing_10k", {}).get("text"):
+            # Imprimir el 10-K por separado, etiquetado. Si falta, el encabezado lo dice:
+            # un "10-K EXTRACTO (filing None)" se lee como un 10-K vacío y no como una
+            # ausencia que hay que investigar.
+            f10k = pkg.get("filing_10k") or {}
+            if f10k.get("text"):
                 print(f"\n{'─' * 60}")
-                print(f"10-K EXTRACTO: {ticker} (filing {pkg['filing_10k'].get('filing_date', 'N/D')})")
+                if f10k.get("filing_date"):
+                    print(f"10-K EXTRACTO: {ticker} (filing {f10k['filing_date']})")
+                else:
+                    print(f"10-K NO DISPONIBLE: {ticker} — leer con atención, es un quality flag")
                 print(f"{'─' * 60}")
-                print(pkg["filing_10k"]["text"])
+                print(f10k["text"])
         except Exception as exc:
             print(f"  ERROR al recolectar datos para {ticker}: {exc}")
             print(f"  Continuar con fuentes manuales: brain_fundamentals.py {ticker}")
@@ -184,20 +190,28 @@ Salidas posibles:
   descartar           falla el negocio
   esperar_precio      ya está en watchlist, sigue cara
 
-Registrar (OBLIGATORIO para cualquier compra o agregar_watchlist):
+Registrar (OBLIGATORIO para cualquier compra o agregar_watchlist).
+Los nombres de los flags son exactos — argparse rechaza cualquier variante:
   venv/bin/python scripts/log_recommendation.py add TICKER \\
       --verdict V \\
       --rationale "tesis de la Etapa 1 y 2 con evidencia numérica (>200 chars)" \\
-      --stage1-moat "tipo de foso + número que lo prueba" \\
-      --stage2-checklist "items que pasan y fallan del checklist" \\
-      --stage3-valuation "P/S vs pares, precio objetivo, por qué ahora" \\
-      --target-price 123.45 \\
+      --stage1 pasa  --stage1-moat "tipo de foso + número que lo prueba (>80 chars)" \\
+      --stage2 pasa  --stage2-checklist "items que pasan y fallan (>80 chars)" \\
+      --stage3 "P/S vs pares, precio objetivo, por qué ahora (>80 chars)" \\
+      --price 71.51 \\
+      --target 123.45 \\
       --wacc 0.09 \\
-      --bear-case "escenario adversarial con nombre de atacante" \\
-      --bear-case-prob 0.20
+      --bear "escenario adversarial con nombre de atacante (>60 chars)" \\
+      --bear-prob 0.20
+
+  OJO con los nombres: es --target (NO --target-price), --bear (NO --bear-case),
+  --bear-prob (NO --bear-case-prob), --stage3 (NO --stage3-valuation).
 
   Para quality_flags presentes: añadir --quality-flag-response "explicación de cómo
   afectan la tesis (o por qué no la afectan)"
+
+  Para 'compra' son obligatorios --target, --wacc y --bear-prob además de los textos
+  de las tres etapas. Sin ellos el script rechaza con exit 1 y no registra nada.
 
   venv/bin/python scripts/brain_watchlist.py --add TICKER --thesis "..." --trigger "..."
 """)

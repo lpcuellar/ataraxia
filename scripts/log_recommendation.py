@@ -64,7 +64,7 @@ def _validate_add(a: argparse.Namespace) -> list[str]:
     required_fields = {
         "stage1_moat": (a.stage1_moat, "--stage1-moat"),
         "stage2_checklist": (a.stage2_checklist, "--stage2-checklist"),
-        "stage3_valuation": (a.stage3, "--stage3-valuation"),
+        "stage3_valuation": (a.stage3, "--stage3"),
         "rationale": (a.rationale, "--rationale"),
         "bear_case": (a.bear, "--bear"),
     }

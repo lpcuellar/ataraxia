@@ -353,6 +353,24 @@ def collect(ticker: str) -> dict[str, Any]:
         except Exception as exc:
             filing_10k = {"error": str(exc)}
 
+        # Un 10-K ausente no es ruido de red: suele significar que el ticker apunta a una
+        # entidad legal distinta de la que tiene la historia (reorganización, holdco
+        # sucesora, fusión). Entra como flag para que el análisis tenga que responderlo.
+        if filing_10k.get("missing"):
+            quality_flags.append({
+                "type": "missing_10k",
+                "severity": "alta",
+                "description": (
+                    f"No hay 10-K en EDGAR para {ticker}. El ticker está mapeado a "
+                    f"{filing_10k.get('entity_name')!r} (CIK {filing_10k.get('cik')}), una entidad "
+                    f"sin 10-K reciente. Probable reorganización corporativa o holdco sucesora. "
+                    f"El análisis debe identificar qué cambió en la estructura legal y si la "
+                    f"continuidad del negocio se sostiene antes de aplicar el framework."
+                ),
+                "entity_name": filing_10k.get("entity_name"),
+                "cik": filing_10k.get("cik"),
+            })
+
         return {
             "ticker": ticker,
             "collected_at": pd.Timestamp.now().isoformat(),

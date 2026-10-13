@@ -23,6 +23,7 @@ Rate limiting: SEC pide máximo 10 requests/segundo. cached_call con TTL de 1 d�
 suficiente para el patrón de uso de Ataraxia (una empresa a la vez, una vez por semana).
 """
 
+import html as html_lib
 import re
 import time
 from typing import Optional
@@ -156,52 +157,86 @@ def get_filing_document(cik: int, accession: str, filename: str) -> str:
     return _get_sec(url)
 
 
-def _strip_html(html: str) -> str:
+def _strip_html(raw: str) -> str:
     """Limpieza básica de HTML a texto plano para pasarlo al LLM."""
     # Quitar scripts y style
-    html = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    raw = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", raw, flags=re.DOTALL | re.IGNORECASE)
     # Quitar tags
-    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"<[^>]+>", " ", raw)
+    # Decodificar entidades: los filings de EDGAR están llenos de &#160; y &#8217;, que sin
+    # esto llegan crudos al LLM y le gastan contexto en ruido ilegible.
+    text = html_lib.unescape(text)
+    # Los espacios tipográficos (nbsp, thin space) se normalizan a espacio normal para que
+    # los patrones tipo "Item 8.01" se puedan buscar con \s de forma predecible.
+    text = text.replace(" ", " ").replace(" ", " ").replace(" ", " ")
     # Normalizar espacios
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
-def _get_exhibit_99_1(cik: int, accession: str) -> Optional[str]:
-    """Busca y descarga el Exhibit 99.1 de un 8-K (press release con datos financieros).
+_DOC_FILE_RE = re.compile(r"([A-Za-z0-9_.\-]+\.(?:htm|html|txt))", re.IGNORECASE)
 
-    El exhibit 99.1 es donde está la tabla de resultados con detalle de revenue, EPS y
-    guidance — mucho más útil que la portada del 8-K. Lo identifica por nombre de archivo
-    (patrones comunes: ex991*.htm, ex99-1*.htm, exhibit99*.htm)."""
+
+def _filing_documents(cik: int, accession: str) -> list[dict]:
+    """Tabla de documentos de un filing: [{description, document, types}].
+
+    Se lee la columna 'Type' del índice en vez de adivinar por nombre de archivo. El nombre
+    lo elige cada empresa — UNH llama a su press release 'earningsrelease2q26_7152.htm', no
+    'ex991.htm' — pero 'Type' es metadata declarada ante la SEC y es consistente entre
+    empresas. Adivinar por nombre fallaba en silencio y devolvía la portada del 8-K (puro
+    XBRL de cover page) como si fuera el press release."""
     acc_clean = accession.replace("-", "")
-    index_url = (
-        f"{_EDGAR_BASE}/Archives/edgar/data/{cik}/{acc_clean}/{accession}-index.htm"
-    )
+    url = f"{_EDGAR_BASE}/Archives/edgar/data/{cik}/{acc_clean}/{accession}-index.htm"
+    html = _get_sec(url)
+
+    docs = []
+    for row in re.findall(r"<tr[^>]*>(.*?)</tr>", html, re.DOTALL | re.IGNORECASE):
+        cells = re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", row, re.DOTALL | re.IGNORECASE)
+        if len(cells) < 3:
+            continue
+        plain = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", c)).strip() for c in cells]
+        # El nombre del documento es la única celda con un archivo .htm/.txt; la fila de
+        # encabezado no tiene ninguno y queda descartada sola.
+        filename = None
+        for cell in plain:
+            m = _DOC_FILE_RE.search(cell)
+            if m:
+                filename = m.group(1)
+                break
+        if not filename:
+            continue
+        docs.append({
+            "document": filename,
+            # El tipo puede estar en distinta posición según el filing, así que se guardan
+            # todas las celdas y se consulta por pertenencia, no por índice fijo.
+            "types": {c.upper() for c in plain},
+        })
+    return docs
+
+
+def _get_exhibit(
+    cik: int,
+    accession: str,
+    preferred_types: tuple[str, ...] = ("EX-99.1", "EX-99", "EX-99.01"),
+) -> Optional[str]:
+    """Descarga el primer exhibit del filing cuyo tipo declarado esté en preferred_types.
+
+    El orden de preferred_types manda: EX-99.1 es el press release de resultados en la
+    inmensa mayoría de los 8-K item 2.02. Devuelve None si no hay ninguno, para que el
+    llamador decida el fallback de forma explícita."""
     try:
-        html = _get_sec(index_url)
+        docs = _filing_documents(cik, accession)
     except Exception:
         return None
 
-    # Buscar links a exhibits 99.1 por nombre de archivo
-    links = re.findall(
-        r'href="(/Archives/edgar/data/[^"]+\.htm)"',
-        html,
-        re.IGNORECASE,
-    )
-    _EX991_RE = re.compile(r"ex99[-_]?1[^/]*\.htm$", re.IGNORECASE)
-    for link in links:
-        filename = link.split("/")[-1]
-        if _EX991_RE.search(filename):
-            try:
-                full_url = f"{_EDGAR_BASE}{link}"
-                resp = requests.get(
-                    full_url, headers=_EDGAR_HEADERS, timeout=20
-                )
-                resp.raise_for_status()
-                return resp.text
-            except Exception:
-                continue
+    for want in preferred_types:
+        for d in docs:
+            if want in d["types"]:
+                try:
+                    return get_filing_document(cik, accession, d["document"])
+                except Exception:
+                    continue
     return None
 
 
@@ -212,33 +247,60 @@ def get_earnings_releases(ticker: str, count: int = 2) -> list[dict]:
     es la fuente más directa para entender si un salto de earnings fue orgánico o por items
     extraordinarios. Mucho más confiable que una noticia de terceros.
 
-    Devuelve lista de dicts con: filing_date, text (texto limpio del Exhibit 99.1)."""
+    Devuelve lista de dicts con: filing_date, accession, source, text.
+
+    'source' distingue de dónde salió el texto y no es cosmético: la portada de un 8-K es
+    casi toda metadata XBRL y no contiene ni revenue ni EPS. Si el texto viene de ahí, el
+    análisis no tiene press release y hay que decirlo en vez de aparentar que sí lo tiene."""
     filings = get_recent_filings(ticker, "8-K", days=400)
     earnings = [f for f in filings if "2.02" in f["items"]][:count]
 
     results = []
     for f in earnings:
         try:
-            # Intentar Exhibit 99.1 primero (el press release con datos financieros)
-            raw = _get_exhibit_99_1(f["cik"], f["accession"])
+            raw = _get_exhibit(f["cik"], f["accession"])
+            source = "exhibit_99"
             if not raw and f["primary_doc"]:
                 raw = get_filing_document(f["cik"], f["accession"], f["primary_doc"])
+                source = "cover_page_8k"
             if not raw:
                 raise ValueError("no se encontró documento del earnings release")
             text = _strip_html(raw) if "<" in raw[:200] else raw
+            if source == "cover_page_8k":
+                text = (
+                    "[ATENCION: no se pudo extraer el Exhibit 99.1 de este 8-K. Lo que sigue "
+                    "es la PORTADA del filing, que es metadata y no trae resultados. No hay "
+                    "press release disponible para este trimestre: no cites cifras de aca.]\n\n"
+                ) + text
             # Limitar a 10,000 chars — suficiente para tablas de resultados y guidance
             results.append({
                 "filing_date": f["filing_date"],
                 "accession": f["accession"],
+                "source": source,
                 "text": text[:10000],
             })
         except Exception as exc:
             results.append({
                 "filing_date": f["filing_date"],
                 "accession": f["accession"],
+                "source": "error",
                 "text": f"[error al descargar: {type(exc).__name__}: {exc}]",
             })
     return results
+
+
+_ITEM_HEADING_RE = re.compile(r"Item\s+\d+\.\d+", re.IGNORECASE)
+
+
+def _event_body(text: str, max_chars: int = 2500) -> str:
+    """Recorta un 8-K desde el primer encabezado 'Item X.XX', donde empieza el hecho.
+
+    Los primeros ~2,800 caracteres de un 8-K son invariablemente lo mismo: metadata XBRL,
+    la portada de la SEC, la lista de checkboxes de Rule 425/14a-12 y la tabla de valores
+    registrados. Cortar desde el inicio devolvía solo ese boilerplate y dejaba fuera el
+    hecho reportado — el agente veía el filing sin poder saber de qué trataba."""
+    m = _ITEM_HEADING_RE.search(text)
+    return text[m.start():m.start() + max_chars] if m else text[:max_chars]
 
 
 def get_material_8k(ticker: str, days: int = 180) -> list[dict]:
@@ -265,8 +327,7 @@ def get_material_8k(ticker: str, days: int = 180) -> list[dict]:
             if f["primary_doc"]:
                 raw = get_filing_document(f["cik"], f["accession"], f["primary_doc"])
                 text = _strip_html(raw) if raw.strip().startswith("<") else raw
-                # Solo las primeras 1,500 chars — suficiente para saber de qué trata
-                summary = text[:1500]
+                summary = _event_body(text)
             else:
                 summary = "[documento principal no disponible]"
         except Exception as exc:
@@ -280,17 +341,117 @@ def get_material_8k(ticker: str, days: int = 180) -> list[dict]:
     return results
 
 
+def get_entity_info(ticker: str) -> dict:
+    """Identidad de la entidad a la que EDGAR mapea un ticker, y la antigüedad de su historia.
+
+    Sirve para distinguir una empresa con décadas de filings de una entidad recién registrada.
+    Cuando una empresa se reorganiza (holdco sucesora, fusión, redomicilio), el ticker pasa a
+    la entidad nueva mientras los filings históricos se quedan bajo el CIK del predecesor,
+    que deja de tener ticker asignado. Sin esta distinción, la ausencia de un 10-K parece un
+    error de red cuando en realidad es un hecho material del negocio."""
+    def fetch():
+        cik = get_cik(ticker)
+        data = _get_sec(f"{_SEC_BASE}/submissions/CIK{cik:010d}.json")
+        recent = data["filings"]["recent"]
+        dates = recent.get("filingDate", [])
+        return {
+            "cik": cik,
+            "name": data.get("name"),
+            "former_names": [fn.get("name") for fn in data.get("formerNames", [])],
+            "filing_count": len(dates),
+            "earliest_filing": dates[-1] if dates else None,
+            "latest_filing": dates[0] if dates else None,
+        }
+
+    return cached_call("edgar_entity_info", {"ticker": ticker.upper()}, fetch)
+
+
+_10K_SECTIONS = (
+    ("Item 1 — Business", r"Item\s+1\.?\s*Business"),
+    ("Item 7 — MD&A", r"Item\s+7\.?\s*Management"),
+)
+
+
+def _pick_section_start(text: str, pattern: str) -> Optional[int]:
+    """Posición donde arranca de verdad una sección, descartando el índice del 10-K.
+
+    El encabezado de cada sección aparece al menos dos veces: una en la tabla de contenidos
+    y otra en la sección real. Se elige la ocurrencia con más texto por delante hasta la
+    siguiente repetición del mismo encabezado. Las entradas del índice están pegadas entre
+    sí, así que puntúan bajo; la sección real puntúa alto. El criterio también descarta una
+    referencia cruzada al final del documento, que tendría poco texto detrás."""
+    starts = [m.start() for m in re.finditer(pattern, text, re.IGNORECASE)]
+    if not starts:
+        return None
+    bounds = starts[1:] + [len(text)]
+    return max(zip(starts, bounds), key=lambda p: p[1] - p[0])[0]
+
+
+def _extract_10k_sections(text: str, max_chars: int) -> str:
+    """Devuelve Item 1 (Business) y Item 7 (MD&A), repartiendo max_chars entre las dos.
+
+    Tomar los primeros max_chars de un 10-K no sirve: el documento abre con decenas de miles
+    de caracteres de contexto XBRL (us-gaap:*Member con sus rangos de fechas) y después la
+    portada y el índice. En el 10-K de UNH el negocio recién empieza cerca del carácter
+    48,000, así que un corte de 20,000 desde el inicio entregaba puro ruido."""
+    chunks = []
+    budget = max_chars // max(1, len(_10K_SECTIONS))
+    for label, pattern in _10K_SECTIONS:
+        start = _pick_section_start(text, pattern)
+        if start is None:
+            continue
+        chunks.append(f"===== {label} =====\n{text[start:start + budget]}")
+
+    if not chunks:
+        # Sin encabezados reconocibles (formato atípico o documento envuelto): se entrega el
+        # inicio y se avisa, en vez de devolver silencio.
+        return (
+            "[No se reconocieron los encabezados Item 1 / Item 7 en este 10-K. "
+            "Lo que sigue es el inicio del documento, que puede ser metadata.]\n\n"
+            + text[:max_chars]
+        )
+    return "\n\n".join(chunks)
+
+
 def get_latest_10k_text(ticker: str, max_chars: int = 20000) -> dict:
-    """Texto del 10-K más reciente, limitado a max_chars.
+    """Extracto del 10-K más reciente: Item 1 (Business) e Item 7 (MD&A).
 
-    Prioriza las secciones más útiles para el análisis: Item 1 (Business), Item 7 (MD&A),
-    y los estados financieros condensados. El 10-K completo puede tener 200+ páginas —
-    max_chars controla cuánto se pasa al LLM.
+    Un 10-K puede pasar de 370,000 caracteres, así que max_chars acota lo que llega al LLM
+    y se reparte entre las dos secciones que sostienen el análisis: qué hace la empresa y
+    cómo explica el management sus resultados.
 
-    Devuelve dict con: filing_date, text."""
+    Devuelve dict con: filing_date, text y full_chars (tamaño del documento completo, para
+    saber qué proporción se está leyendo)."""
     filings = get_recent_filings(ticker, "10-K", days=400)
     if not filings:
-        return {"filing_date": None, "text": "No se encontró 10-K en los últimos 400 días."}
+        # Caso real (XOM, oct-2026): company_tickers.json mapea el ticker a una holdco
+        # sucesora recién registrada que todavía no presentó 10-K; los filings históricos
+        # siguen bajo el CIK del predecesor, que ya perdió el ticker. EDGAR no expone el
+        # vínculo predecesor→sucesor, así que no se puede resolver automáticamente. Se
+        # reporta explícito porque la reorganización misma es material para la tesis.
+        try:
+            entity = get_entity_info(ticker)
+        except Exception:
+            entity = {}
+        return {
+            "filing_date": None,
+            "missing": True,
+            "entity_name": entity.get("name"),
+            "cik": entity.get("cik"),
+            "text": (
+                f"SIN 10-K DISPONIBLE. En EDGAR el ticker {ticker.upper()} está mapeado a "
+                f"{entity.get('name')!r} (CIK {entity.get('cik')}), que no presentó 10-K en los "
+                f"últimos 400 días. Esa entidad tiene {entity.get('filing_count')} filings y el "
+                f"más antiguo es del {entity.get('earliest_filing')}.\n\n"
+                f"Si ese primer filing es reciente, la entidad es nueva: probable reorganización, "
+                f"holdco sucesora, fusión o redomicilio. Los estados financieros del data package "
+                f"vienen de Yahoo y sí tienen historia, así que no hay contradicción entre ambos — "
+                f"pero el cambio de entidad legal es un hecho material.\n\n"
+                f"OBLIGATORIO: averiguá qué pasó con la estructura corporativa antes de concluir. "
+                f"Es el 'paso previo' del framework: qué negocio es HOY. No asumas continuidad "
+                f"entre predecesor y entidad nueva sin verificarla."
+            ),
+        }
 
     latest = filings[0]
     try:
@@ -299,7 +460,11 @@ def get_latest_10k_text(ticker: str, max_chars: int = 20000) -> dict:
                     "text": "[documento principal del 10-K no disponible en EDGAR]"}
         raw = get_filing_document(latest["cik"], latest["accession"], latest["primary_doc"])
         text = _strip_html(raw) if raw.strip().startswith("<") else raw
-        return {"filing_date": latest["filing_date"], "text": text[:max_chars]}
+        return {
+            "filing_date": latest["filing_date"],
+            "full_chars": len(text),
+            "text": _extract_10k_sections(text, max_chars),
+        }
     except Exception as exc:
         return {
             "filing_date": latest["filing_date"],

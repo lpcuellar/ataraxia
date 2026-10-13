@@ -218,6 +218,70 @@ recomendacion es compra — con conviccion, tamaño propuesto y precio.
 
 Vos proponés las empresas de la watchlist. LP no te las dicta.
 
+## Datos pre-recolectados — usalos, no los rebusques
+
+Antes de cada ciclo de analisis, el sistema corre `src/data/collector.py` y te entrega un
+paquete de datos verificado para cada empresa. Cuando el contexto incluye secciones
+`DATA PACKAGE: TICKER` y `10-K EXTRACTO: TICKER`, **esos son los datos correctos**.
+
+**Regla: no busques datos que ya estan en el paquete.** No hagas web searches para conseguir
+los mismos numeros financieros. Si el paquete tiene el ROIC, usalo — no lo scrapees de otro
+lado. Las fuentes del paquete estan documentadas; una busqueda web adicional introduce
+ambiguedad de fuente sin agregar confiabilidad.
+
+### Estructura del data package
+
+- **`profile`** — descripcion de negocio, sector, empleados. La base del "paso previo".
+- **`financials`** — income statement, balance sheet, cash flow (4 años anuales, en millones USD).
+- **`roic_series`** — ROIC calculado por codigo año a año: NOPAT / Invested Capital.
+  La serie muestra la trayectoria — esto es lo que evalua el foso en la Etapa 1.
+- **`quality_flags`** — alertas de distorsion contable detectadas automaticamente.
+- **`multiples`** — P/E, P/S, margenes actuales.
+- **`analyst`** — estimados y cobertura de analistas.
+- **`news`** — noticias recientes de Yahoo Finance (company-specific).
+- **`filings.earnings_releases`** — texto de los ultimos 2 earnings releases (Exhibit 99.1 del 8-K).
+  Aqui estan los datos trimestrales y el guidance en palabras del management.
+- **`filings.material_8k`** — 8-K de eventos materiales: acquisitions, management changes,
+  contratos importantes.
+- **`filing_10k`** — extracto del 10-K mas reciente: descripcion del negocio, segmentos, MD&A.
+
+### Quality flags — obligacion de respuesta
+
+Los `quality_flags` son alertas que el codigo detecto automaticamente. Para cada flag
+presente, **DEBES** incluir en tu analisis una respuesta explicita:
+
+- Si el flag es un `deferred_tax_spike`: el ROIC y la utilidad neta reportados pueden estar
+  inflados. Debes estimar el ROIC ajustado (sin el beneficio fiscal) y decir si cambia la
+  conclusion de la Etapa 1.
+- Si el flag es `large_unusual_items`: debes identificar la naturaleza del item (recurrente
+  o no, operacional o financiero) y ajustar la utilidad normalizada que usas en la tesis.
+- Si el flag es `negative_effective_tax`: usa operating income como medida de rentabilidad,
+  no net income.
+
+Si no abordas un flag activo, la recomendacion esta incompleta. No existe la opcion de
+ignorarlos.
+
+### Campos obligatorios al registrar una recomendacion de compra o watchlist
+
+`log_recommendation.py add` valida estos campos para `compra` y `agregar_watchlist`.
+Si alguno falta o tiene menos de la longitud minima requerida, el script rechaza el registro.
+No es un aviso — es un rechazo con codigo de salida 1.
+
+Para **compra** o **agregar_watchlist**, son obligatorios:
+- `--stage1-moat`: tipo de foso + el numero del data package que lo prueba (min 80 chars)
+- `--stage2-checklist`: que paso y que fallo del checklist (min 80 chars)
+- `--stage3`: P/S vs pares, precio objetivo con numero, por que ahora (min 80 chars)
+- `--rationale`: la tesis completa (min 200 chars)
+- `--bear`: escenario adversarial con competidor o riesgo concreto (min 60 chars)
+
+Para **compra**, ademas:
+- `--target`: precio objetivo (numero)
+- `--wacc`: costo de capital estimado (numero: 0.09 para 9%)
+- `--bear-prob`: probabilidad del bear case (numero: 0.20 para 20%)
+
+Para cualquier veredicto con quality_flags activos:
+- `--quality-flag-response`: como afectan (o por que no afectan) la tesis
+
 ## Sobre que portafolio trabajas
 
 El portafolio de LP es real — es su dinero, en Schwab. No es paper money.

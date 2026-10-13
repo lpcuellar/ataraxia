@@ -38,17 +38,95 @@ VERDICTS = ["compra", "agregar_watchlist", "esperar_precio", "descartar",
             "recortar", "vender", "mantener"]
 ACTIONS = ["ejecutada", "rechazada", "parcial", "pendiente"]
 
+# Verdicts que requieren análisis completo. Para los demás (descartar, mantener, etc.)
+# los campos de análisis son opcionales.
+_VERDICTS_REQUIRE_ANALYSIS = {"compra", "agregar_watchlist", "recortar"}
+
+# Longitudes mínimas por campo — suficientes para detectar placeholders vacíos
+_MIN_LENGTHS = {
+    "stage1_moat": 80,       # "foso de costos de cambio; NRR 112% (Q3 2025)"
+    "stage2_checklist": 80,  # "basics: pasan calidad, liderazgo, oportunidad. balance: ..."
+    "stage3_valuation": 80,  # "P/S 8.2x vs peers 12.4x; objetivo $245 en 18 meses"
+    "rationale": 200,        # la tesis completa
+    "bear_case": 60,         # "competidor X entra con precio 30% menor"
+}
+
+
+def _validate_add(a: argparse.Namespace) -> list[str]:
+    """Valida campos obligatorios para verdicts que requieren análisis completo.
+    Devuelve lista de errores (vacía si todo está bien)."""
+    if a.verdict not in _VERDICTS_REQUIRE_ANALYSIS:
+        return []
+
+    errors = []
+
+    # Campos obligatorios para compra / agregar_watchlist
+    required_fields = {
+        "stage1_moat": (a.stage1_moat, "--stage1-moat"),
+        "stage2_checklist": (a.stage2_checklist, "--stage2-checklist"),
+        "stage3_valuation": (a.stage3, "--stage3-valuation"),
+        "rationale": (a.rationale, "--rationale"),
+        "bear_case": (a.bear, "--bear"),
+    }
+    for field, (value, flag) in required_fields.items():
+        if not value:
+            errors.append(f"{flag} es obligatorio para veredicto '{a.verdict}'")
+        elif len(value.strip()) < _MIN_LENGTHS[field]:
+            errors.append(
+                f"{flag} tiene {len(value.strip())} caracteres — mínimo {_MIN_LENGTHS[field]}. "
+                f"No es un placeholder: debe contener evidencia real."
+            )
+
+    # Precio objetivo obligatorio para compra
+    if a.verdict == "compra" and a.target is None:
+        errors.append("--target (precio objetivo) es obligatorio para veredicto 'compra'")
+
+    # WACC obligatorio para compra (va embebido en stage3 o como flag aparte)
+    if a.verdict == "compra" and a.wacc is None:
+        errors.append(
+            "--wacc es obligatorio para veredicto 'compra'. "
+            "Es el número que permite comparar con ROIC. Estimarlo es parte del análisis."
+        )
+
+    # Bear case probability obligatorio para compra
+    if a.verdict in ("compra",) and a.bear_prob is None:
+        errors.append("--bear-prob es obligatorio para veredicto 'compra' (probabilidad 0.0-1.0)")
+
+    return errors
+
 
 def cmd_add(a: argparse.Namespace) -> int:
+    errors = _validate_add(a)
+    if errors:
+        print(f"RECHAZADO — el análisis de '{a.ticker.upper()}' está incompleto:", file=sys.stderr)
+        for e in errors:
+            print(f"  • {e}", file=sys.stderr)
+        print(file=sys.stderr)
+        print("Una recomendación de compra sin evidencia completa no sirve para tomar", file=sys.stderr)
+        print("decisiones. Completá el análisis antes de registrarlo.", file=sys.stderr)
+        return 1
+
+    # Embeber WACC en stage3_valuation si se pasó como flag separado
+    stage3 = a.stage3
+    if a.wacc is not None and stage3:
+        wacc_pct = f"{a.wacc * 100:.1f}%"
+        if "wacc" not in stage3.lower():
+            stage3 = f"[WACC estimado: {wacc_pct}] {stage3}"
+
+    # Embeber quality_flag_response en rationale si se pasó
+    rationale = a.rationale
+    if a.quality_flag_response:
+        rationale = f"{rationale}\n\nCalidad de datos — respuesta a flags: {a.quality_flag_response}"
+
     k.log_recommendation(
         a.ticker,
         verdict=a.verdict,
-        rationale=a.rationale,
+        rationale=rationale,
         stage1_moat=a.stage1_moat,
         stage1_verdict=a.stage1,
         stage2_checklist=a.stage2_checklist,
         stage2_verdict=a.stage2,
-        stage3_valuation=a.stage3,
+        stage3_valuation=stage3,
         price_at_recommendation=a.price,
         target_price=a.target,
         proposed_size_pct=a.size,
@@ -129,10 +207,16 @@ def main() -> int:
     p.add_argument("--bear", help="Bear case")
     p.add_argument("--bear-prob", type=float, help="Probabilidad del bear case (0-1)")
     p.add_argument("--stage1", choices=["pasa", "falla"], help="Veredicto Etapa 1")
-    p.add_argument("--stage1-moat", help="Resumen del foso")
+    p.add_argument("--stage1-moat", help="Resumen del foso con evidencia numérica")
     p.add_argument("--stage2", choices=["pasa", "falla"], help="Veredicto Etapa 2")
-    p.add_argument("--stage2-checklist", help="Resumen del checklist")
-    p.add_argument("--stage3", help="Resumen de valuacion")
+    p.add_argument("--stage2-checklist", help="Resumen del checklist con items que pasan/fallan")
+    p.add_argument("--stage3", dest="stage3", help="Resumen de valuación: P/S vs pares, precio objetivo, timing")
+    p.add_argument("--wacc", type=float,
+                   help="WACC estimado (0.09 = 9%%). Obligatorio para 'compra'. "
+                        "Se compara con ROIC del data package para validar el foso.")
+    p.add_argument("--quality-flag-response", dest="quality_flag_response",
+                   help="Respuesta a cada quality_flag del data package: "
+                        "cómo afectan (o no) la tesis. Obligatorio si el paquete tiene flags.")
     p.set_defaults(func=cmd_add)
 
     p = sub.add_parser("action", help="LP registra que hizo con una recomendacion")

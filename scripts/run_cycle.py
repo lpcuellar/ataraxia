@@ -27,6 +27,7 @@ Uso:
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -120,34 +121,84 @@ def reporte(args: argparse.Namespace) -> int:
     print(f"\n{'=' * 70}")
     print("A analizar en este ciclo:", ", ".join(tickers))
     print(f"{'=' * 70}")
-    print("""
-Framework (src/agent/prompt.py) — las etapas son filtros, no secciones de informe:
 
-  Paso previo   Verificar que negocio es HOY. Un ticker no cambia cuando la
-                empresa si.
+    # Recolectar datos estructurados para cada ticker ANTES del análisis.
+    # El LLM recibe estos datos ya limpios y verificados — no busca datos por su cuenta.
+    _header("5. Paquetes de datos pre-recolectados")
+    for ticker in tickers:
+        print(f"\n>>> Recolectando datos para {ticker}...")
+        try:
+            from src.data.collector import collect
+            pkg = collect(ticker)
+            print(f"\n{'─' * 60}")
+            print(f"DATA PACKAGE: {ticker}")
+            print(f"{'─' * 60}")
+            # Imprimir el paquete en JSON legible para el LLM
+            # Excluir el 10-K completo del output del ciclo (demasiado largo para el contexto
+            # del reporte; está disponible en pkg['filing_10k'] si se necesita)
+            pkg_summary = {k2: v for k2, v in pkg.items() if k2 != "filing_10k"}
+            # Truncar news a 5 items para el reporte
+            if "news" in pkg_summary:
+                pkg_summary["news"] = pkg_summary["news"][:5]
+            print(json.dumps(pkg_summary, ensure_ascii=False, indent=2, default=str))
+            # Imprimir el 10-K por separado, etiquetado
+            if pkg.get("filing_10k", {}).get("text"):
+                print(f"\n{'─' * 60}")
+                print(f"10-K EXTRACTO: {ticker} (filing {pkg['filing_10k'].get('filing_date', 'N/D')})")
+                print(f"{'─' * 60}")
+                print(pkg["filing_10k"]["text"])
+        except Exception as exc:
+            print(f"  ERROR al recolectar datos para {ticker}: {exc}")
+            print(f"  Continuar con fuentes manuales: brain_fundamentals.py {ticker}")
+
+    print(f"\n{'=' * 70}")
+    print("""
+INSTRUCCIONES PARA EL ANALISIS:
+
+Los datos de cada empresa ya están arriba (secciones DATA PACKAGE y 10-K EXTRACTO).
+USA ESOS DATOS. No hagas búsquedas web adicionales para conseguir los mismos números —
+ya están aquí, verificados y con fuente explícita.
+
+Si el paquete tiene quality_flags, DEBES abordar cada uno en el análisis.
+No puedes concluir sobre ROIC, utilidad neta, o EPS sin mencionar los flags activos.
+
+Framework — etapas son filtros, no secciones de informe:
+
+  Paso previo   Verificar que negocio es HOY. Usar el campo 'profile' del data package
+                más el texto del 10-K. Un ticker no cambia cuando la empresa sí.
 
   Etapa 1       Riesgo y foso durable. ELIMINATORIA.
-                Anatomia (tipo + el numero que lo prueba), durabilidad como
-                derivada (ROIC y margen bruto a 5-10 años), ROIC vs WACC,
-                caso del atacante con nombre propio, verificacion por segmento.
-                Si falla: dos lineas con el motivo y se descarta. No avanza.
+                Anatomía (tipo + número del data package que lo prueba), ROIC de la
+                serie roic_series (no declararlo — usar los números calculados),
+                ROIC vs WACC explícito (estimar WACC con número), caso del atacante.
+                Si falla: dos líneas con el motivo. No avanza.
 
-  Etapa 2       Checklist Carlson — basics y balance.
+  Etapa 2       Checklist Carlson — usar financials del data package.
 
-  Etapa 3       Valuacion: P/S contra pares + TAM. De aqui salen precio
-                objetivo y momento de compra.
+  Etapa 3       Valuación: usar multiples del data package + pares. De aquí sale el
+                precio objetivo (número obligatorio) y el momento de compra.
 
 Salidas posibles:
   compra              pasa las tres y el precio lo vale HOY
   agregar_watchlist   pasa negocio, falla solo precio
   descartar           falla el negocio
-  esperar_precio      ya esta en watchlist, sigue cara
+  esperar_precio      ya está en watchlist, sigue cara
 
-Datos:
-  venv/bin/python scripts/brain_fundamentals.py TICKER
+Registrar (OBLIGATORIO para cualquier compra o agregar_watchlist):
+  venv/bin/python scripts/log_recommendation.py add TICKER \\
+      --verdict V \\
+      --rationale "tesis de la Etapa 1 y 2 con evidencia numérica (>200 chars)" \\
+      --stage1-moat "tipo de foso + número que lo prueba" \\
+      --stage2-checklist "items que pasan y fallan del checklist" \\
+      --stage3-valuation "P/S vs pares, precio objetivo, por qué ahora" \\
+      --target-price 123.45 \\
+      --wacc 0.09 \\
+      --bear-case "escenario adversarial con nombre de atacante" \\
+      --bear-case-prob 0.20
 
-Registrar:
-  venv/bin/python scripts/log_recommendation.py add TICKER --verdict V --rationale "..."
+  Para quality_flags presentes: añadir --quality-flag-response "explicación de cómo
+  afectan la tesis (o por qué no la afectan)"
+
   venv/bin/python scripts/brain_watchlist.py --add TICKER --thesis "..." --trigger "..."
 """)
     return 0

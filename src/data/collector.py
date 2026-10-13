@@ -19,7 +19,9 @@ Lo que incluye el paquete (collect()):
 
 Cálculo de ROIC:
   NOPAT = Operating Income × (1 - effective_tax_rate)
-  effective_tax_rate = Tax Provision / Pretax Income (por año, capeado en [0, 0.5])
+  effective_tax_rate = Tax Provision / Pretax Income cuando ambos son positivos, capeado en [0, 0.5]
+  Convención yfinance: Tax Provision POSITIVA = gasto fiscal (normal); NEGATIVA = crédito (inusual).
+  Si Tax Provision es negativa, se usa 0% para no inflar NOPAT con beneficios no recurrentes.
   ROIC = NOPAT / Invested Capital
 
   Invested Capital viene directamente de yfinance balance_sheet — es la suma de
@@ -81,14 +83,18 @@ def _calc_roic(income_stmt: pd.DataFrame, balance_sheet: pd.DataFrame) -> list[d
         tax_provision = _safe_float(inc, "Tax Provision")
         pretax_income = _safe_float(inc, "Pretax Income")
 
-        # Effective tax rate desde la propia empresa ese año, no marginal
-        # Tax Provision es negativo cuando es gasto, positivo cuando es beneficio (crédito)
+        # Effective tax rate desde la propia empresa ese año, no marginal.
+        # Convención yfinance: Tax Provision POSITIVA = gasto fiscal (empresa paga, normal).
+        #                      Tax Provision NEGATIVA = crédito/beneficio (inusual, no recurrente).
         effective_tax = None
         if tax_provision is not None and pretax_income and abs(pretax_income) > 1e6:
-            # yfinance: Tax Provision negativo = gasto fiscal (lo normal)
-            # rate = gasto fiscal / pretax income. Caps: [0, 0.50]
-            raw_rate = -tax_provision / pretax_income
-            effective_tax = max(0.0, min(0.50, raw_rate))
+            if tax_provision >= 0 and pretax_income > 0:
+                # Caso normal: empresa paga impuestos → tasa = gasto / pretax
+                effective_tax = min(0.50, tax_provision / pretax_income)
+            else:
+                # Tax Provision negativa (crédito no recurrente) o pretax negativo.
+                # Para ROIC conservador usamos 0%: no inflamos NOPAT con créditos puntuales.
+                effective_tax = 0.0
 
         nopat = None
         if operating_income is not None and effective_tax is not None:
@@ -170,7 +176,11 @@ def _detect_quality_flags(
                         "ratio_to_op_income": round(ratio, 2),
                     })
 
-    # --- Flag 3: Tax Provision negativa (beneficio fiscal grande) ---
+    # --- Flag 3: Tax Provision negativa (crédito/beneficio fiscal grande) ---
+    # Convención yfinance: Tax Provision POSITIVA = gasto fiscal (empresa paga, lo normal).
+    # Tax Provision NEGATIVA = crédito/beneficio fiscal (inusual, infla net income sin caja).
+    # Solo flagear cuando la provisión es NEGATIVA y el beneficio es > 20% del pretax.
+    # Ejemplo real: Uber 2025 Tax Provision = -$4.3B (reversión de valuation allowance DTA).
     tax_row = "Tax Provision"
     pretax_row = "Pretax Income"
     if tax_row in income_stmt.index and pretax_row in income_stmt.index:
@@ -178,19 +188,19 @@ def _detect_quality_flags(
             tax = _safe_float(income_stmt[col], tax_row)
             pretax = _safe_float(income_stmt[col], pretax_row)
             if tax is not None and pretax and pretax > 1e6:
-                # Tax Provision negativa = gasto fiscal (normal). Si es POSITIVA = crédito
-                if tax > pretax * 0.20:  # crédito > 20% del pretax income
+                # Flagear solo si Tax Provision es NEGATIVA (crédito) y es grande
+                if tax < 0 and abs(tax) > abs(pretax) * 0.20:
                     flags.append({
                         "type": "negative_effective_tax",
                         "severity": "alta",
                         "description": (
-                            f"Tax Provision positiva (beneficio) = ${tax/1e9:.2f}B en {col.year} "
-                            f"({tax/pretax*100:.0f}% del pretax income). "
-                            f"Net income GAAP incluye beneficio fiscal no recurrente. "
+                            f"Tax Provision negativa (crédito fiscal) = ${abs(tax)/1e9:.2f}B en {col.year} "
+                            f"({abs(tax)/abs(pretax)*100:.0f}% del pretax income). "
+                            f"Net income GAAP incluye beneficio fiscal no recurrente — no es caja real. "
                             f"Usar operating income para medir rentabilidad real."
                         ),
                         "year": col.year,
-                        "tax_benefit_billions": round(tax / 1e9, 2),
+                        "tax_benefit_billions": round(abs(tax) / 1e9, 2),
                     })
 
     return flags

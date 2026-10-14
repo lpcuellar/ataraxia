@@ -286,8 +286,10 @@ Para cualquier veredicto con quality_flags activos:
 
 El portafolio de LP es real — es su dinero, en Schwab. No es paper money.
 
-La fuente de verdad es el CSV mas reciente que LP sube (`data/portfolio-YYYY-MM-DD.csv`).
-Leelo al inicio de cada ciclo. **Si el snapshot tiene mas de dos semanas, decilo
+La fuente de verdad es el snapshot mas reciente en Supabase (`portfolio_snapshots`), que
+se lee con `scripts/brain_portfolio.py`. Leelo al inicio de cada ciclo. Las ventas y compras
+que LP reporta despues del snapshot viven en la bitacora (`log_recommendation.py list`):
+cruzalas antes de opinar. **Si el snapshot tiene mas de dos semanas, decilo
 explicitamente en el reporte** en vez de asumir que sigue vigente: una tesis sobre un
 portafolio desactualizado es peor que ninguna.
 

@@ -37,43 +37,107 @@ def run():
     result = v.validate_trade_proposal(proposal, p)
     check("Compra valida dentro de todos los limites se aprueba", result.approved)
 
-    # --- limite de 15% por posicion ---
-    p = empty_portfolio(cash=100_000.0)
-    proposal = v.TradeProposal(ticker="AAPL", action="buy", quantity=200, price=100.0, **BC)  # $20,000 = 20% > 15%
-    result = v.validate_trade_proposal(proposal, p)
-    check("Compra que excede 15% de la cartera se rechaza", not result.approved)
-    check("La razon del rechazo menciona el limite", "15%" in result.reason or "maximo permitido" in result.reason)
+    # --- limite de concentracion: 25% del costo de las ACCIONES (decision de LP 2026-10-14) ---
+    # El denominador son solo las acciones: ni ETFs ni cash. Y el tope exige al menos 4
+    # posiciones para ser aritmeticamente posible, asi que los casos de abajo parten de una
+    # cartera ya diversificada — con menos posiciones el tope no aplica (ver su propio test).
+    def sleeve(n: int, each_cost: float = 10_000.0, cash: float = 100_000.0, **kw):
+        """Cartera de n acciones de igual costo, cada una en 1/n del costo de acciones."""
+        positions = [
+            v.Position(ticker=f"EQ{i}", quantity=100, avg_cost=each_cost / 100, current_price=each_cost / 100)
+            for i in range(n)
+        ]
+        return v.PortfolioState(positions=positions, cash=cash, **kw)
 
-    # --- agregar a una posicion existente tambien respeta el 15% ---
-    existing = v.Position(ticker="AAPL", quantity=100, avg_cost=100.0, current_price=100.0)  # $10k de $100k = 10%
-    p = v.PortfolioState(positions=[existing], cash=90_000.0)
-    proposal = v.TradeProposal(ticker="AAPL", action="buy", quantity=60, price=100.0, **BC)  # +$6k -> $16k / $100k = 16%
+    # 4 acciones de $10k = $40k de costo en acciones. Comprar $20k de una nueva la deja en
+    # 20k/60k = 33% > 25%.
+    p = sleeve(4)
+    proposal = v.TradeProposal(ticker="AAPL", action="buy", quantity=200, price=100.0, **BC)
     result = v.validate_trade_proposal(proposal, p)
-    check("Agregar a una posicion existente tambien respeta el limite de 15%", not result.approved)
+    check("Compra que excede 25% del costo de las acciones se rechaza", not result.approved)
+    check("La razon del rechazo menciona el limite", "25%" in result.reason or "maximo permitido" in result.reason)
+    check("La razon aclara que ETFs y cash no cuentan", "ETFs" in result.reason)
 
-    # --- el limite de 15% es AL COSTO, no a valor de mercado ---
-    # Posicion ganadora: costo $8k (8%) pero valor de mercado ya subio a $16k (16%). Si el
-    # chequeo usara valor de mercado, esto se rechazaria aunque no se este agregando nada
-    # que exceda el costo real. Al costo, agregar $1k mas (-> $9k / 9%) debe aprobarse.
-    winner = v.Position(ticker="NVDA", quantity=40, avg_cost=200.0, current_price=400.0)  # costo $8k, mercado $16k
-    p = v.PortfolioState(positions=[winner], cash=92_000.0)  # total al costo = 100k, a mercado = 108k
-    proposal = v.TradeProposal(ticker="NVDA", action="buy", quantity=5, price=400.0, **BC)  # +$2k costo -> $10k/100k = 10%
+    # Misma cartera, compra chica: $5k de una nueva -> 5k/45k = 11%. Debe aprobarse.
+    proposal = v.TradeProposal(ticker="AAPL", action="buy", quantity=50, price=100.0, **BC)
+    result = v.validate_trade_proposal(proposal, p)
+    check("Compra que queda debajo del 25% se aprueba", result.approved)
+
+    # --- el denominador crece con la compra ---
+    # 4 x $10k = $40k. Comprar $13k de una nueva: contra el denominador PREVIO seria
+    # 13/40 = 32.5% (rechazo), pero el correcto es 13/53 = 24.5% (aprobacion), porque la
+    # compra convierte cash en costo de accion y sube el denominador tambien.
+    p = sleeve(4)
+    proposal = v.TradeProposal(ticker="AAPL", action="buy", quantity=130, price=100.0, **BC)
+    result = v.validate_trade_proposal(proposal, p)
+    check(
+        "El denominador incluye la compra misma: 13k/53k = 24.5% se aprueba "
+        "(contra el denominador previo habria dado 32.5% y bloqueado de mas)",
+        result.approved,
+    )
+
+    # --- los ETFs NO entran en el denominador ---
+    # Misma manga de acciones ($40k) pero con $500k de ETFs al lado. Si los ETFs contaran,
+    # el porcentaje se diluiria a ~4% y la compra pasaria. Con el denominador correcto sigue
+    # siendo 33% y debe rechazarse: tener un indice al lado no habilita concentrar mas.
+    p = sleeve(4, etf_cost_basis=500_000.0, etf_market_value=500_000.0)
+    proposal = v.TradeProposal(ticker="AAPL", action="buy", quantity=200, price=100.0, **BC)
+    result = v.validate_trade_proposal(proposal, p)
+    check(
+        "Los ETFs no diluyen el limite: $500k de ETFs al lado no habilitan una compra "
+        "que deja 33% del costo de las acciones en un nombre",
+        not result.approved,
+    )
+
+    # --- agregar a una posicion existente tambien respeta el tope ---
+    # 4 x $10k; agregar $5k a una existente la deja en 15k/45k = 33% > 25%.
+    p = sleeve(4)
+    proposal = v.TradeProposal(ticker="EQ0", action="buy", quantity=50, price=100.0, **BC)
+    result = v.validate_trade_proposal(proposal, p)
+    check("Agregar a una posicion existente tambien respeta el tope", not result.approved)
+
+    # --- el tope es AL COSTO, no a valor de mercado ---
+    # Ganadora: costo $10k (uno de 5 iguales = 20%) pero su valor de mercado se duplico. Si
+    # el chequeo usara valor de mercado se rechazaria sin que se haya agregado nada; al costo,
+    # agregar $1k la deja en 11k/51k = 21.6% y debe aprobarse.
+    p = sleeve(5)
+    p.positions[0] = v.Position(ticker="NVDA", quantity=100, avg_cost=100.0, current_price=200.0)
+    proposal = v.TradeProposal(ticker="NVDA", action="buy", quantity=5, price=200.0, **BC)
     result = v.validate_trade_proposal(proposal, p)
     check("Ganadora apreciada: el limite se mide contra el costo, no el valor de mercado inflado", result.approved)
 
-    # Posicion perdedora: costo $20k (20%, ya excede el limite) pero valor de mercado cayo a
-    # $10k (10% — pasaria un chequeo a valor de mercado). Debe rechazarse igual, porque
-    # excede el limite AL COSTO — este es exactamente el escenario que la regla existe para
-    # evitar (promediar a la baja mas alla del costo permitido).
-    loser = v.Position(ticker="PTON", quantity=200, avg_cost=100.0, current_price=50.0)  # costo $20k, mercado $10k
-    p = v.PortfolioState(positions=[loser], cash=80_000.0)  # total al costo = 100k, a mercado = 90k
+    # Perdedora: costo $30k de $60k en acciones (50%, ya excede) pero su valor de mercado cayo
+    # a $15k, que contra el mercado luciria chico. Debe rechazarse igual — este es exactamente
+    # el escenario que la regla existe para evitar: promediar a la baja mas alla del costo.
+    p = sleeve(3)
+    p.positions.append(v.Position(ticker="PTON", quantity=300, avg_cost=100.0, current_price=50.0))
     proposal = v.TradeProposal(ticker="PTON", action="buy", quantity=1, price=50.0, **BC)
     result = v.validate_trade_proposal(proposal, p)
     check(
-        "Perdedora que ya excede el limite AL COSTO se rechaza aunque su valor de mercado "
+        "Perdedora que ya excede el tope AL COSTO se rechaza aunque su valor de mercado "
         "luzca pequeño (evita promediar a la baja mas alla del limite)",
         not result.approved,
     )
+
+    # --- el tope no se aplica cuando es aritmeticamente imposible ---
+    # Con 25% hacen falta >= 4 posiciones. Con 3 o menos, cualquier compra queda arriba del
+    # tope por aritmetica pura; si bloqueara, no habria forma de reconstruir una cartera y el
+    # guardrail entraria en deadlock. Debe aprobar, pero avisando.
+    p = sleeve(2)
+    proposal = v.TradeProposal(ticker="AAPL", action="buy", quantity=100, price=100.0, **BC)
+    result = v.validate_trade_proposal(proposal, p)
+    check("Con 3 posiciones resultantes el tope no bloquea (seria imposible de cumplir)", result.approved)
+    check(
+        "Pero avisa que el tope no se pudo aplicar",
+        any("tope no se aplica" in w for w in result.warnings),
+    )
+
+    # Primera compra en cartera vacia: 100% del costo de acciones por construccion. No puede
+    # bloquear, porque entonces nunca se podria empezar a invertir.
+    p = empty_portfolio()
+    proposal = v.TradeProposal(ticker="AAPL", action="buy", quantity=100, price=100.0, **BC)
+    result = v.validate_trade_proposal(proposal, p)
+    check("La primera compra en una cartera vacia no queda bloqueada por el tope", result.approved)
 
     # --- cash insuficiente ---
     p = empty_portfolio(cash=500.0)
@@ -175,7 +239,13 @@ def run():
     proposal = v.TradeProposal(ticker="AAPL", action="buy", quantity=10, price=100.0, **BC)
     result = v.validate_trade_proposal(proposal, p)
     check("Cartera con pocas posiciones se aprueba igual (con warning, no bloqueo)", result.approved)
-    check("El warning de conteo minimo aparece", len(result.warnings) == 1)
+    # Se verifica el contenido, no la cantidad: una cartera chica dispara tambien el aviso de
+    # que el tope de concentracion no se pudo aplicar, y contar warnings haria fallar el test
+    # por un aviso extra que es correcto.
+    check(
+        "El warning de conteo minimo aparece",
+        any("debajo del objetivo minimo" in w for w in result.warnings),
+    )
 
     # --- bear case obligatorio ---
     p = empty_portfolio()

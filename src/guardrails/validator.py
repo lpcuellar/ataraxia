@@ -12,8 +12,11 @@ validacion debe poder correr dos veces — una vez en el brain (Cowork) y otra v
 executor, sin depender de que compartan conexion a DB ni estado mutable.
 
 Guardrails implementados aqui (fuente de verdad: PROJECT_PLAN.md Seccion 1):
-  - Maximo 15% de posicion individual al costo (cost basis, no valor de mercado — ver
-    Position.cost_basis / PortfolioState.total_cost_basis) -> validate_trade_proposal (hard)
+  - Maximo 25% de posicion individual sobre el costo de las acciones, sin ETFs ni cash en el
+    denominador (cost basis, no valor de mercado — ver Position.cost_basis /
+    PortfolioState.equity_cost_basis) -> validate_trade_proposal (hard).
+    Limite y denominador fijados por LP el 2026-10-14; antes era 15% sobre el costo total
+    incluyendo ETFs y cash, que no era comparable con como se mide el alpha.
   - Sin operaciones intradia (mismo ticker, compra y venta)   -> validate_trade_proposal (hard)
   - Cartera objetivo de 8-12 posiciones                       -> validate_trade_proposal (max
     es hard — no se abre una posicion #13; el minimo de 8 es un warning, no bloquea ventas
@@ -45,7 +48,7 @@ from copy import deepcopy
 import math
 
 
-MAX_POSITION_PCT = 0.15
+MAX_POSITION_PCT = 0.25
 THESIS_REVIEW_TRIGGER_PCT = -0.20
 # Debajo de esto, una posicion es tan chica que no mueve el resultado aunque acierte —
 # candidata natural a ceder su lugar en una sustitucion.
@@ -112,6 +115,19 @@ class PortfolioState:
     @property
     def total_cost_basis(self) -> float:
         return self.cash + self.etf_cost_basis + sum(p.cost_basis for p in self.positions)
+
+    @property
+    def equity_cost_basis(self) -> float:
+        """Costo de las acciones individuales, sin ETFs ni cash.
+
+        Este es el denominador del limite de concentracion (decision de LP 2026-10-14). La
+        razon es consistencia con como se mide el alpha: los ETFs amplios son ancla pasiva
+        fuera del mandato de Ataraxia — VOO *es* el benchmark — y por eso quedan fuera de la
+        medicion de retorno. Si quedan fuera de la medicion, tambien tienen que quedar fuera
+        del limite: incluirlos infla el denominador y deja concentrar mas en un solo nombre
+        justamente porque hay un indice al lado. Con los numeros del 14-oct, VOO era 31% del
+        costo total, asi que la diferencia no era teorica."""
+        return sum(p.cost_basis for p in self.positions)
 
     def get_position(self, ticker: str) -> Position | None:
         for p in self.positions:
@@ -316,24 +332,55 @@ def validate_trade_proposal(proposal: TradeProposal, portfolio: PortfolioState) 
     # modulo): usar current_value/total_value aqui permitiria promediar a la baja una posicion
     # perdedora mas alla de su costo real, mientras una ganadora se topa con el limite por
     # apreciacion de precio sin haberse agregado nada — exactamente al reves de la intencion
-    # de la regla. cost_basis/total_cost_basis no se mueven con el precio de mercado.
+    # de la regla. cost_basis no se mueve con el precio de mercado.
+    #
+    # El denominador es equity_cost_basis y por eso hay que sumarle el notional: una compra
+    # convierte cash en costo de equity, asi que el denominador crece junto con el numerador.
+    # Con el denominador viejo (total_cost_basis, que incluye cash y ETFs) esto no hacia
+    # falta porque la suma era invariante ante una compra — el cash bajaba lo mismo que subia
+    # el costo. Al sacar el cash del denominador esa invariancia se pierde: usar el valor
+    # previo sobreestimaria el porcentaje resultante y bloquearia compras validas.
     existing_cost = existing.cost_basis if existing else 0.0
     resulting_position_cost = existing_cost + proposal.notional
-    total_cost = portfolio.total_cost_basis
-    resulting_pct = resulting_position_cost / total_cost if total_cost > 0 else float("inf")
-    if resulting_pct > MAX_POSITION_PCT:
+    resulting_equity_cost = portfolio.equity_cost_basis + proposal.notional
+    resulting_pct = (
+        resulting_position_cost / resulting_equity_cost
+        if resulting_equity_cost > 0
+        else float("inf")
+    )
+
+    # Un tope de concentracion del 25% exige al menos 4 posiciones para poder cumplirse: con
+    # tres o menos, cualquier compra queda arriba del limite por aritmetica y el guardrail
+    # bloquearia TODAS las compras, sin forma de salir del bloqueo. El piso se deriva del
+    # propio limite (no es un numero elegido a mano) para que siga siendo correcto si el
+    # limite cambia. Debajo del piso el tope no se aplica: no hay nada que concentrar todavia.
+    min_positions_for_limit = math.ceil(1 / MAX_POSITION_PCT)
+    resulting_equity_positions = len(portfolio.positions) + (1 if is_new_position else 0)
+    limit_is_satisfiable = resulting_equity_positions >= min_positions_for_limit
+
+    if limit_is_satisfiable and resulting_pct > MAX_POSITION_PCT:
         return GuardrailResult(
             False,
-            f"la compra dejaria a {proposal.ticker} en {resulting_pct:.1%} de la cartera al "
-            f"costo (maximo permitido: {MAX_POSITION_PCT:.0%})",
+            f"la compra dejaria a {proposal.ticker} en {resulting_pct:.1%} del costo de las "
+            f"acciones (maximo permitido: {MAX_POSITION_PCT:.0%}; los ETFs y el cash no "
+            f"cuentan para este limite)",
         )
 
     warnings = []
-    resulting_count = len(portfolio.positions) + (1 if is_new_position else 0)
-    if resulting_count < TARGET_MIN_POSITIONS:
+    if resulting_equity_positions < TARGET_MIN_POSITIONS:
         warnings.append(
-            f"la cartera queda con {resulting_count} posiciones, debajo del objetivo "
-            f"minimo de {TARGET_MIN_POSITIONS} — no bloquea la operacion, solo aviso"
+            f"la cartera queda con {resulting_equity_positions} posiciones, debajo del "
+            f"objetivo minimo de {TARGET_MIN_POSITIONS} — no bloquea la operacion, solo aviso"
+        )
+
+    # Que el tope no se haya podido aplicar tiene que verse. Si no, una cartera chica
+    # aprobaria una compra que la deja en 60% de un solo nombre sin que nada lo mencione.
+    if not limit_is_satisfiable and resulting_pct > MAX_POSITION_PCT:
+        warnings.append(
+            f"{proposal.ticker} queda en {resulting_pct:.1%} del costo de las acciones, "
+            f"arriba del tope de {MAX_POSITION_PCT:.0%}, pero el tope no se aplica con "
+            f"{resulting_equity_positions} posicion(es): hacen falta al menos "
+            f"{min_positions_for_limit} para que sea aritmeticamente posible cumplirlo"
         )
 
     return GuardrailResult(True, "aprobado", warnings=warnings)

@@ -95,10 +95,10 @@ def reporte(args: argparse.Namespace) -> int:
     try:
         s = load_latest()
         if s.is_stale:
-            print(f"\n*** El CSV tiene {s.age_days} dias. Decilo explicitamente en el")
-            print("    reporte y pedile a LP un export nuevo. ***")
+            print(f"\n*** El snapshot de portafolio tiene {s.age_days} dias. Decilo explicitamente")
+            print("    en el reporte y pedile a LP que suba uno nuevo a Supabase. ***")
     except FileNotFoundError:
-        print("\n*** No hay CSV de portafolio. Pedirselo a LP antes de opinar. ***")
+        print("\n*** No hay snapshot de portafolio. Pedirselo a LP antes de opinar. ***")
 
     _header("2. Watchlist")
     _run("brain_watchlist.py", "--check-prices")

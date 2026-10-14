@@ -20,12 +20,19 @@ assert not validate_replacement(sell,buy,p,'Comparacion',costs=1).approved
 assert not validate_replacement(sell,buy,p,'').approved
 print('PASS: efectivo insuficiente y ausencia de tesis bloquean reemplazo')
 p.cash=1000
+# 15 posiciones de $100; vender T0 deja $1,400 y comprar $500 de NEW la pone en
+# 500/1900 = 26.3%, arriba del tope de 25% sobre el costo de las acciones.
 assert not validate_replacement(sell,TradeProposal('NEW','buy',50,10,**bc),p,'Comparacion').approved
-print('PASS: reemplazo sigue respetando limite de 15%')
+print(f'PASS: reemplazo sigue respetando el tope de {MAX_POSITION_PCT:.0%}')
 s=load_latest(); v=to_validator_state(s)
 assert len(v.positions)==len(s.equities)
+# total_cost_basis sigue incluyendo ETFs y cash: lo usan el reporte y compute_performance.
 assert abs(v.total_cost_basis-(s.total_cost_basis+s.cash))<.01
-print('PASS: ETFs excluidos de conteo, incluidos en denominador de cartera real')
+# Pero el denominador del tope de concentracion es solo acciones (LP 2026-10-14). En la
+# cartera real los ETFs son ~31% del costo, asi que confundirlos no es un detalle.
+assert abs(v.equity_cost_basis-sum(e.cost_basis for e in s.equities))<.01
+assert v.equity_cost_basis < v.total_cost_basis
+print('PASS: ETFs en total_cost_basis (reporte) pero fuera de equity_cost_basis (tope)')
 for n in (float('nan'),float('inf')):
     assert not validate_trade_proposal(TradeProposal('NEW','buy',n,10,**bc),p).approved
 print('PASS: cantidades no finitas rechazadas')

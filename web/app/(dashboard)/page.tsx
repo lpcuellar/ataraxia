@@ -1,8 +1,10 @@
-import { getEquityAggregatesBySnapshot, getLotsForSnapshot, getSnapshotHistory } from "@/lib/db";
+import { getEquityAggregatesBySnapshot, getLotsForSnapshot, getSnapshotHistory, getWatchlist } from "@/lib/db";
 import { buildPerformanceSeries, buildPositions, computeRiskMetrics } from "@/lib/metrics";
 import MetricsCards from "@/components/MetricsCards";
 import PerformanceChart from "@/components/PerformanceChart";
 import DistributionChart from "@/components/DistributionChart";
+import PositionsSummaryTable from "@/components/PositionsSummaryTable";
+import WatchlistSummaryTable from "@/components/WatchlistSummaryTable";
 import Card from "@/components/Card";
 
 // Con Cache Components (Next 16) una ruta con datos sin cachear tiene que optar
@@ -12,9 +14,10 @@ import Card from "@/components/Card";
 export const instant = false;
 
 export default async function OverviewPage() {
-  const [snapshots, equityAggregates] = await Promise.all([
+  const [snapshots, equityAggregates, watchlist] = await Promise.all([
     getSnapshotHistory(),
     getEquityAggregatesBySnapshot(),
+    getWatchlist(),
   ]);
 
   const latestSnapshot = [...snapshots].sort((a, b) => b.as_of.localeCompare(a.as_of))[0];
@@ -45,6 +48,14 @@ export default async function OverviewPage() {
           <DistributionChart positions={positions} />
         </Card>
       </div>
+
+      <Card title="Posiciones" subtitle="Acciones y ETFs, ordenadas por valor">
+        <PositionsSummaryTable positions={positions} />
+      </Card>
+
+      <Card title={`Watchlist (${watchlist.length})`} subtitle="Esperando precio de entrada">
+        <WatchlistSummaryTable entries={watchlist} />
+      </Card>
     </div>
   );
 }

@@ -12,6 +12,9 @@ const BAR_COLOR = "#3987e5"; // --series-1 dark
 const GRID = "#2c2c2a"; // --gridline dark
 const MUTED = "#898781"; // --text-muted (mismo valor en los dos modos)
 
+const ROW_HEIGHT = 32; // px por ticker — suficiente para el logo de 18px + aire
+const MIN_HEIGHT = 200;
+
 function CustomTooltip({
   active,
   payload,
@@ -34,6 +37,32 @@ function CustomTooltip({
   );
 }
 
+/** Tick del eje Y con el logo al lado del ticker — un <img> normal no entra en SVG, asi
+ * que va dentro de un foreignObject. El fallback a iniciales esta en TickerLogo.tsx. */
+function TickerTick({ x = 0, y = 0, payload }: { x?: number; y?: number; payload?: { value: string } }) {
+  const ticker = payload?.value ?? "";
+  return (
+    <foreignObject x={x - 56} y={y - 10} width={52} height={20}>
+      <div className="flex items-center justify-end gap-1.5" style={{ width: 52 }}>
+        <img
+          src={`https://logos.stockanalysis.com/${ticker.toLowerCase()}.svg`}
+          alt=""
+          width={16}
+          height={16}
+          className="shrink-0 rounded-full"
+          style={{ width: 16, height: 16, objectFit: "contain" }}
+          onError={(e) => {
+            (e.target as HTMLImageElement).style.visibility = "hidden";
+          }}
+        />
+        <span className="truncate text-xs" style={{ color: MUTED }}>
+          {ticker}
+        </span>
+      </div>
+    </foreignObject>
+  );
+}
+
 export default function DistributionChart({ positions }: { positions: PositionRow[] }) {
   const equities = positions
     .filter((p) => p.assetClass === "equity")
@@ -47,10 +76,16 @@ export default function DistributionChart({ positions }: { positions: PositionRo
     );
   }
 
+  // La altura crece con la cantidad de tickers — con una altura fija, 12+ posiciones se
+  // amontonaban y las etiquetas de abajo quedaban ilegibles/solapadas (lo que LP vio como
+  // "no aparecen todos"). Con alto variable, cada fila tiene el mismo aire sin importar
+  // cuantas posiciones haya.
+  const height = Math.max(MIN_HEIGHT, equities.length * ROW_HEIGHT);
+
   return (
-    <div className="h-64 w-full">
+    <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={equities} layout="vertical" margin={{ left: 8, right: 24 }} barCategoryGap={2}>
+        <BarChart data={equities} layout="vertical" margin={{ left: 8, right: 24 }} barCategoryGap={4}>
           <CartesianGrid strokeDasharray="0" stroke={GRID} horizontal={false} />
           <XAxis
             type="number"
@@ -64,10 +99,11 @@ export default function DistributionChart({ positions }: { positions: PositionRo
             type="category"
             dataKey="ticker"
             stroke={MUTED}
-            tick={{ fill: MUTED, fontSize: 12 }}
+            tick={<TickerTick />}
             axisLine={false}
             tickLine={false}
-            width={56}
+            width={72}
+            interval={0}
           />
           <Tooltip content={<CustomTooltip />} cursor={{ fill: "var(--page-plane)" }} />
           {/* <=24px de grosor y extremo redondeado de datos (references/marks-and-anatomy.md) */}

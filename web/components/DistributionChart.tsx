@@ -1,14 +1,18 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PositionRow } from "@/lib/metrics";
 
-// Un ticker no tiene mas "identidad categorica" frente a otro que lo justifique: son
-// categorias nominales sin orden natural, asi que un color por barra (uno de 12 del
-// catalogo) seria el anti-patron "value-ramp sobre categorias nominales"
-// (references/anti-patterns.md) — double-encodea el largo de la barra como color sin
-// agregar informacion. Un solo color (slot 1) para todas las barras es lo correcto.
-const BAR_COLOR = "#3987e5"; // --series-1 dark
+// Color por compañia, extraido del logo de cada una (LP, 2026-10-15) — ver
+// lib/logo-colors.ts para como se calcula y por que. Esto se aparta a proposito de la
+// regla general del catalogo de la skill dataviz ("un ticker no tiene identidad
+// categorica frente a otro, un solo color para todas las barras"): la regla existe para
+// evitar el anti-patron de inventar una paleta sin orden ni validacion CVD sobre
+// categorias nominales. Ac aca no se inventa nada — es el color de marca real de cada
+// empresa — y la mitigacion de accesibilidad sigue intacta porque cada barra YA lleva el
+// logo y el ticker como etiqueta directa (references/marks-and-anatomy.md): ningun
+// lector depende de distinguir el color para saber que compañia es cada barra.
+const DEFAULT_COLOR = "#3987e5"; // --series-1 dark — mismo fallback que lib/logo-colors.ts
 const GRID = "#2c2c2a"; // --gridline dark
 const MUTED = "#898781"; // --text-muted (mismo valor en los dos modos)
 
@@ -20,25 +24,28 @@ function CustomTooltip({
   payload,
 }: {
   active?: boolean;
-  payload?: { payload: { ticker: string; pct: number } }[];
+  payload?: { payload: { ticker: string; pct: number; color: string } }[];
 }) {
   if (!active || !payload?.length) return null;
-  const { ticker, pct } = payload[0].payload;
+  const { ticker, pct, color } = payload[0].payload;
   return (
     <div
-      className="rounded-lg border px-3 py-2 text-xs shadow-sm"
+      className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs shadow-sm"
       style={{ borderColor: "var(--border)", background: "var(--surface-1)" }}
     >
+      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: color }} />
       <span className="font-semibold tabular-nums" style={{ color: "var(--text-primary)" }}>
         {pct}%
-      </span>{" "}
+      </span>
       <span style={{ color: "var(--text-muted)" }}>{ticker}</span>
     </div>
   );
 }
 
 /** Tick del eje Y con el logo al lado del ticker — un <img> normal no entra en SVG, asi
- * que va dentro de un foreignObject. El fallback a iniciales esta en TickerLogo.tsx. */
+ * que va dentro de un foreignObject. Si el logo no carga, el texto del ticker solo sigue
+ * siendo suficiente identidad (no hay fallback a iniciales aca; seria redundante con el
+ * texto que ya esta al lado). */
 function TickerTick({ x = 0, y = 0, payload }: { x?: number; y?: number; payload?: { value: string } }) {
   const ticker = payload?.value ?? "";
   return (
@@ -63,10 +70,24 @@ function TickerTick({ x = 0, y = 0, payload }: { x?: number; y?: number; payload
   );
 }
 
-export default function DistributionChart({ positions }: { positions: PositionRow[] }) {
+export default function DistributionChart({
+  positions,
+  colors = {},
+}: {
+  positions: PositionRow[];
+  /** ticker -> color hex, del color de marca extraido del logo (lib/logo-colors.ts).
+   * Se calcula en el servidor (el CDN de logos no manda CORS, asi que no se puede leer
+   * pixeles desde el navegador) y se pasa ya resuelto — un ticker sin entrada cae al
+   * color por defecto, no a un error. */
+  colors?: Record<string, string>;
+}) {
   const equities = positions
     .filter((p) => p.assetClass === "equity")
-    .map((p) => ({ ticker: p.ticker, pct: Number((p.weightAtCost * 100).toFixed(1)) }));
+    .map((p) => ({
+      ticker: p.ticker,
+      pct: Number((p.weightAtCost * 100).toFixed(1)),
+      color: colors[p.ticker.toUpperCase()] ?? DEFAULT_COLOR,
+    }));
 
   if (equities.length === 0) {
     return (
@@ -107,7 +128,11 @@ export default function DistributionChart({ positions }: { positions: PositionRo
           />
           <Tooltip content={<CustomTooltip />} cursor={{ fill: "var(--page-plane)" }} />
           {/* <=24px de grosor y extremo redondeado de datos (references/marks-and-anatomy.md) */}
-          <Bar dataKey="pct" fill={BAR_COLOR} radius={[0, 4, 4, 0]} maxBarSize={20} />
+          <Bar dataKey="pct" radius={[0, 4, 4, 0]} maxBarSize={20}>
+            {equities.map((e) => (
+              <Cell key={e.ticker} fill={e.color} />
+            ))}
+          </Bar>
         </BarChart>
       </ResponsiveContainer>
     </div>

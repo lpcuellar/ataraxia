@@ -1,5 +1,6 @@
 import { getEquityAggregatesBySnapshot, getLotsForSnapshot, getSnapshotHistory, getWatchlist } from "@/lib/db";
 import { buildPerformanceSeries, buildPositions, computeRiskMetrics } from "@/lib/metrics";
+import { getLogoColors } from "@/lib/logo-colors";
 import MetricsCards from "@/components/MetricsCards";
 import PerformanceChart from "@/components/PerformanceChart";
 import DistributionChart from "@/components/DistributionChart";
@@ -27,6 +28,11 @@ export default async function OverviewPage() {
   const { positions } = buildPositions(lots);
   const risk = computeRiskMetrics(series);
 
+  // Colores de marca solo para las acciones del grafico de distribucion — los ETFs no
+  // entran ahi, no hace falta pedir su logo para esto.
+  const equityTickers = positions.filter((p) => p.assetClass === "equity").map((p) => p.ticker);
+  const logoColors = await getLogoColors(equityTickers);
+
   return (
     <div className="flex flex-col gap-6">
       <header>
@@ -45,7 +51,7 @@ export default async function OverviewPage() {
       <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
         <PerformanceChart series={series} />
         <Card title="Distribución" subtitle="Acciones, al costo">
-          <DistributionChart positions={positions} />
+          <DistributionChart positions={positions} colors={logoColors} />
         </Card>
       </div>
 

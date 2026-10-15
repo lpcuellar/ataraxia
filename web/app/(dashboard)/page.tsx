@@ -1,7 +1,7 @@
 import { getEquityAggregatesBySnapshot, getLotsForSnapshot, getSnapshotHistory } from "@/lib/db";
 import { buildPerformanceSeries, buildPositions, computeRiskMetrics } from "@/lib/metrics";
 import MetricsCards from "@/components/MetricsCards";
-import PerformanceChart from "@/components/PerformanceChart";
+import TrendChart from "@/components/TrendChart";
 import DistributionChart from "@/components/DistributionChart";
 import Card from "@/components/Card";
 
@@ -39,11 +39,26 @@ export default async function OverviewPage() {
 
       <MetricsCards series={series} risk={risk} />
 
-      <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
-        <Card title="Retorno de equities vs. S&P 500">
-          <PerformanceChart series={series} />
+      {/* Small multiples (references/choosing-a-form.md): el portafolio esta en dolares
+          y el S&P 500 en puntos de indice — escalas distintas, asi que cada uno tiene su
+          propio grafico en vez de compartir un eje (ver anti-patterns.md #1: dual-axis).
+          El alpha, que SI es la comparacion, ya vive arriba en la tarjeta de metricas. */}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <Card title="Portafolio" subtitle="Valor de mercado de las acciones, USD">
+          <TrendChart
+            data={series.map((p) => ({ asOf: p.asOf, value: p.equityMarketValue }))}
+            valueLabel="Portafolio"
+            variant="usd"
+          />
         </Card>
-        <Card title="Distribución del portafolio" subtitle="Acciones, al costo">
+        <Card title="S&P 500" subtitle="Nivel del índice">
+          <TrendChart
+            data={series.map((p) => ({ asOf: p.asOf, value: p.sp500Close }))}
+            valueLabel="S&P 500"
+            variant="index"
+          />
+        </Card>
+        <Card title="Distribución" subtitle="Acciones, al costo">
           <DistributionChart positions={positions} />
         </Card>
       </div>

@@ -18,6 +18,7 @@ export type PerformancePoint = {
   equityMarketValue: number;
   equityCostBasis: number;
   cumulativeReturnPct: number; // retorno acumulado de las equities desde el primer snapshot
+  sp500Close: number | null; // nivel crudo del indice ese dia (puntos, no %)
   sp500ReturnPct: number | null; // retorno acumulado del S&P 500 en la misma ventana
   relativeReturnPct: number | null; // alpha: equities - S&P 500
 };
@@ -66,6 +67,7 @@ export function buildPerformanceSeries(
       equityMarketValue: agg.value,
       equityCostBasis: agg.cost,
       cumulativeReturnPct,
+      sp500Close: snap.sp500_close ? Number(snap.sp500_close) : null,
       sp500ReturnPct,
       relativeReturnPct:
         sp500ReturnPct !== null ? cumulativeReturnPct - sp500ReturnPct : null,

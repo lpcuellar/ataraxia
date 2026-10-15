@@ -165,6 +165,12 @@ def main() -> int:
         print(f"\nERROR: ya existe un snapshot con fecha {as_of}.", file=sys.stderr)
         return 1
 
+    from src.data.market import get_sp500_close_on
+    sp500_close = get_sp500_close_on(as_of)
+    if sp500_close is None:
+        print(f"AVISO: no se pudo obtener el cierre del S&P 500 del {as_of} — "
+              "el snapshot se guarda sin benchmark.")
+
     snapshot_id = db.insert_portfolio_snapshot(
         as_of=as_of,
         source_file=(
@@ -177,9 +183,26 @@ def main() -> int:
         equity_count=len(equity_tickers),
         etf_count=len(etf_tickers),
         lots=payload,
-        sp500_close=None,
+        sp500_close=sp500_close,
     )
     print(f"\nOK — snapshot {snapshot_id} del {as_of} con {len(payload)} lotes.")
+
+    # cash_events ahora es el libro de caja completo (decision de LP 2026-10-14): depositos,
+    # retiros y las ventas/compras que LP ya ejecuto en Schwab. Este script solo vende, asi
+    # que el monto es simplemente el cambio neto de cash que LP reporto — no se recalcula a
+    # partir de precios en vivo, porque esta funcion documenta lo que de verdad paso en el
+    # broker (comisiones, slippage), no una estimacion.
+    if sold:
+        proceeds = round(args.cash - base["cash"], 2)
+        db.record_cash_event(
+            date=as_of,
+            event_type="sell",
+            amount=proceeds,
+            note=f"Venta total de {', '.join(sorted(sold))} (cash ${base['cash']:,.2f} -> "
+                 f"${args.cash:,.2f}, reportado por LP)",
+        )
+        print(f"Cash event registrado: sell ${proceeds:,.2f}")
+
     return 0
 
 

@@ -601,6 +601,27 @@ def insert_portfolio_snapshot(
         conn.close()
 
 
+def update_snapshot_sp500_close(snapshot_id: int, sp500_close: float) -> None:
+    """Rellena sp500_close en un snapshot ya existente.
+
+    Unica excepcion deliberada a 'un snapshot es un hecho historico fechado y no se edita'
+    (ver snapshot_exists): sp500_close es la referencia del benchmark para ESE as_of, no una
+    observacion del portafolio en si — total_market_value, cash y los lotes siguen sin
+    tocarse jamas. Pensado para backfill cuando el snapshot se creo sin acceso de red al
+    benchmark, o para los snapshots de antes de que esto se poblara automaticamente."""
+    conn = get_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "update portfolio_snapshots set sp500_close = %(sp500_close)s "
+                    "where id = %(id)s",
+                    {"id": snapshot_id, "sp500_close": sp500_close},
+                )
+    finally:
+        conn.close()
+
+
 def get_latest_snapshot() -> dict | None:
     """Cabecera del snapshot mas reciente, o None si no hay ninguno.
 

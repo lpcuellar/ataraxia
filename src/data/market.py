@@ -98,6 +98,52 @@ def get_sp500_historical(start_date: str, end_date: str) -> list[dict]:
     )
 
 
+def get_sp500_close_on(as_of: str) -> float | None:
+    """Cierre del S&P 500 en una fecha dada (YYYY-MM-DD), para poblar portfolio_snapshots.
+
+    Via FMP primero por consistencia con get_sp500_historical, pero ese endpoint esta
+    bloqueado en el plan actual (ver docstring del modulo) incluso para el indice en
+    algunos rangos, asi que yfinance ^GSPC es el fallback que de hecho funciona —
+    mismo patron que scripts/compute_performance.py._sp500_close().
+
+    Devuelve None (no lanza) si ninguna fuente tiene el dato: un snapshot sin benchmark
+    sigue siendo utilizable para ver el portafolio, asi que no vale la pena hacer fallar
+    la carga completa por esto. El caller decide si eso es aceptable."""
+    from datetime import date, timedelta
+
+    def fetch():
+        target = date.fromisoformat(as_of)
+        try:
+            history = get_sp500_historical(as_of, as_of)
+            closes = [row["close"] for row in history if "close" in row]
+            if closes:
+                return {"close": closes[0]}
+        except Exception:
+            pass
+
+        try:
+            import warnings
+
+            import yfinance as yf
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                # Ventana de +1 dia: Yahoo indexa por la fecha de la sesion, y un end
+                # exclusivo igual al start no devuelve filas.
+                hist = yf.Ticker(SP500_INDEX_SYMBOL).history(
+                    start=as_of, end=(target + timedelta(days=1)).isoformat()
+                )
+            if not hist.empty:
+                return {"close": float(hist["Close"].iloc[-1])}
+        except Exception:
+            pass
+
+        return {"close": None}
+
+    result = cached_call("sp500_close_on", {"as_of": as_of}, fetch)
+    return result["close"]
+
+
 def get_sp500_return(start_date: str, end_date: str) -> float:
     """Retorno porcentual del S&P 500 entre dos fechas. Falla explicitamente (en vez de
     devolver 0.0) si no hay suficientes datos, para no ensuciar la metrica de alpha con un

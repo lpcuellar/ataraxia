@@ -59,10 +59,11 @@ class Position:
         """
         Schwab reporta 'ETFs & Closed End Funds' para fondos y 'Equity' para acciones.
 
-        Importa para los guardrails: el tope de 15% al costo existe para acotar riesgo
-        idiosincratico de una empresa. Un ETF de indice ya es una canasta diversificada,
-        asi que el limite no aplica — y la concentracion Carlson de 8-15 nombres se cuenta
-        sobre equities, no sobre fondos.
+        Importa para los guardrails: el tope de concentracion al costo (25%, ver
+        src.guardrails.validator.MAX_POSITION_PCT) existe para acotar riesgo idiosincratico
+        de una empresa. Un ETF de indice ya es una canasta diversificada, asi que el limite
+        no aplica — y la concentracion Carlson de 8-15 nombres se cuenta sobre equities, no
+        sobre fondos.
         """
         t = self.asset_type.lower()
         return "etf" in t or "fund" in t
@@ -104,13 +105,43 @@ class PortfolioSnapshot:
     def etfs(self) -> list[Position]:
         return [p for p in self.positions if p.is_etf]
 
+    @property
+    def equity_cost_basis(self) -> float:
+        """Costo de las acciones individuales, sin ETFs ni cash — la base del tope de 25%
+        (decision de LP 2026-10-14; ver src.guardrails.validator.PortfolioState.equity_cost_basis,
+        del cual esta propiedad es el equivalente del lado CSV)."""
+        return sum(p.cost_basis for p in self.equities)
+
+    @property
+    def equity_market_value(self) -> float:
+        """Valor de mercado de las acciones individuales, sin ETFs ni cash. Base del peso a
+        mercado — informativo (decision de LP 2026-10-14): el tope de compra sigue siendo
+        unicamente al costo, pero cuanto de la plata real esta hoy en un nombre es una
+        pregunta distinta de cuanto capital se le asigno, y las dos se mueven distinto
+        cuando el precio cambia sin que se compre ni se venda nada."""
+        return sum(p.market_value for p in self.equities)
+
     def weight_at_cost(self, ticker: str) -> float:
-        """Peso de una posicion sobre el costo total — la base del limite de 15%."""
-        if not self.total_cost_basis:
+        """Peso de una posicion sobre el costo de las acciones (sin ETFs ni cash) — la base
+        del tope de concentracion que aplica el guardrail."""
+        if not self.equity_cost_basis:
             return 0.0
-        for p in self.positions:
+        for p in self.equities:
             if p.ticker == ticker:
-                return p.cost_basis / self.total_cost_basis
+                return p.cost_basis / self.equity_cost_basis
+        return 0.0
+
+    def weight_at_market(self, ticker: str) -> float:
+        """Peso de una posicion sobre el valor de mercado de las acciones — cuanto de la
+        plata real esta hoy en ese nombre. Puramente informativo: no hay guardrail que lo
+        use. Se muestra al lado del peso al costo porque las dos divergen con el tiempo —
+        una posicion que se aprecia mucho pesa mas a mercado sin que se le haya agregado
+        nada, y el peso al costo no lo refleja."""
+        if not self.equity_market_value:
+            return 0.0
+        for p in self.equities:
+            if p.ticker == ticker:
+                return p.market_value / self.equity_market_value
         return 0.0
 
 
@@ -120,11 +151,11 @@ def to_validator_state(snapshot: "PortfolioSnapshot"):
 
     Asi los guardrails corren contra el portafolio real de LP y no contra el fondo
     simulado — que es el punto del rediseño. Mantiene el principio "el LLM propone,
-    el codigo decide": el validador sigue siendo la autoridad sobre el tope de 15%.
+    el codigo decide": el validador sigue siendo la autoridad sobre el tope de concentracion.
 
-    Solo pasa las acciones: el tope de 15% al costo y el objetivo de 8-15 nombres
-    existen para acotar riesgo idiosincratico de una empresa, y un ETF de indice ya
-    es una canasta diversificada.
+    Solo pasa las acciones: el tope al costo y el objetivo de 8-15 nombres existen para
+    acotar riesgo idiosincratico de una empresa, y un ETF de indice ya es una canasta
+    diversificada.
     """
     from src.guardrails.validator import Position as VPosition
     from src.guardrails.validator import PortfolioState

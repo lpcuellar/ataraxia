@@ -23,11 +23,13 @@ from src.data.portfolio_csv import (  # noqa: E402
     STALE_AFTER_DAYS,
     load_latest,
 )
+from src.guardrails.validator import MAX_POSITION_PCT  # noqa: E402
 
-# Concentracion Carlson. El validator mantiene el limite duro de 15% al costo.
+# Concentracion Carlson. MAX_POSITION_PCT se importa del validator en vez de duplicarse aca:
+# un numero repetido en dos archivos es un numero que se desincroniza, que es justo lo que
+# paso con el 15% viejo cuando el limite subio a 25% y este archivo se quedo atras.
 TARGET_MIN_POSITIONS = 8
 TARGET_MAX_POSITIONS = 15
-MAX_POSITION_AT_COST = 0.15
 
 
 def main() -> int:
@@ -68,32 +70,54 @@ def main() -> int:
         print("\nSin posiciones.")
         return 0
 
-    def line(p, mark_limit: bool) -> str:
-        w = s.weight_at_cost(p.ticker)
+    def line(p, is_equity: bool) -> str:
         flags = []
-        if mark_limit and w > MAX_POSITION_AT_COST:
-            flags.append("EXCEDE 15% AL COSTO")
         if p.gain_pct <= -20:
             flags.append("REVISION DE TESIS OBLIGATORIA (-20%)")
+        # weight_at_cost/weight_at_market se definen sobre equity_cost_basis/
+        # equity_market_value (sin ETFs), asi que para un ETF siempre darian 0% — un numero
+        # que parece bug en vez de "no aplica". Se omiten ambas columnas para ETFs.
+        if is_equity:
+            w_cost = s.weight_at_cost(p.ticker)
+            if w_cost > MAX_POSITION_PCT:
+                flags.append(f"EXCEDE {MAX_POSITION_PCT:.0%} AL COSTO")
+            cost_txt = f"{w_cost:5.1%} costo"
+            mkt_txt = f"{s.weight_at_market(p.ticker):5.1%} mcdo"
+        else:
+            cost_txt = "   n/a      "
+            mkt_txt = "  n/a"
         suffix = "  [" + " | ".join(flags) + "]" if flags else ""
         return (
-            f"  {p.ticker:6} {w:5.1%} costo | {p.quantity:>9.4f} @ ${p.avg_cost:8.2f} "
-            f"-> ${p.price:8.2f}  {p.gain_pct:+7.2f}%  ${p.market_value:>9,.2f}{suffix}"
+            f"  {p.ticker:6} {cost_txt} | {mkt_txt} | {p.quantity:>9.4f} "
+            f"@ ${p.avg_cost:8.2f} -> ${p.price:8.2f}  {p.gain_pct:+7.2f}%  "
+            f"${p.market_value:>9,.2f}{suffix}"
         )
 
     if s.equities:
-        print("\nAcciones (sujetas al limite de 15% al costo):")
+        print(f"\nAcciones (sujetas al tope de {MAX_POSITION_PCT:.0%} al costo; el peso a "
+              "mercado es solo informativo, no bloquea nada):")
         for p in sorted(s.equities, key=lambda x: -x.cost_basis):
-            print(line(p, mark_limit=True))
+            print(line(p, is_equity=True))
 
     if s.etfs:
-        print("\nETFs (el limite de 15% no aplica — ya son canastas diversificadas):")
+        print(f"\nETFs (el tope de {MAX_POSITION_PCT:.0%} no aplica — ya son canastas diversificadas):")
         for p in sorted(s.etfs, key=lambda x: -x.cost_basis):
-            print(line(p, mark_limit=False))
+            print(line(p, is_equity=False))
 
-    over_limit = [p.ticker for p in s.equities if s.weight_at_cost(p.ticker) > MAX_POSITION_AT_COST]
+    over_limit = [p.ticker for p in s.equities if s.weight_at_cost(p.ticker) > MAX_POSITION_PCT]
     if over_limit:
-        print(f"\nAcciones sobre el limite de 15% al costo: {', '.join(over_limit)}")
+        print(f"\nAcciones sobre el tope de {MAX_POSITION_PCT:.0%} al costo: {', '.join(over_limit)}")
+
+    # Informativo, no un guardrail: solo senala cuando el peso a mercado se aleja bastante
+    # del peso al costo, que es la situacion que motivo agregar esta columna (GOOG al costo
+    # 10.2%, a mercado ~17% por apreciacion, sin haberse comprado nada de mas).
+    diverging = [
+        p.ticker for p in s.equities
+        if s.weight_at_market(p.ticker) - s.weight_at_cost(p.ticker) > 0.05
+    ]
+    if diverging:
+        print(f"Peso a mercado bastante arriba del costo (+5pp o mas): {', '.join(diverging)} "
+              "— no bloquea, es la plata real concentrandose por apreciacion")
 
     review = [p.ticker for p in s.positions if p.gain_pct <= -20]
     if review:

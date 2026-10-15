@@ -42,7 +42,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="Parsea y resume, sin escribir en la DB")
     parser.add_argument("--sp500-close", type=float, default=None,
-                        help="Cierre del S&P 500 ese dia, para la comparacion relativa")
+                        help="Override manual del cierre del S&P 500 ese dia. Si se omite, "
+                             "se obtiene automaticamente (src.data.market.get_sp500_close_on)")
     args = parser.parse_args()
 
     directory = Path(args.directory)
@@ -115,6 +116,14 @@ def main() -> int:
         holding_period=l.holding_period,
     ) for l in snap.lots]
 
+    sp500_close = args.sp500_close
+    if sp500_close is None:
+        from src.data.market import get_sp500_close_on
+        sp500_close = get_sp500_close_on(as_of)
+        if sp500_close is None:
+            print(f"AVISO: no se pudo obtener el cierre del S&P 500 del {as_of} — "
+                  "el snapshot se guarda sin benchmark.")
+
     snapshot_id = db.insert_portfolio_snapshot(
         as_of=as_of,
         source_file=f"{directory.name} ({len(snap.source_files)} archivos Lot Details)",
@@ -124,7 +133,7 @@ def main() -> int:
         equity_count=snap.count_by_class("equity"),
         etf_count=snap.count_by_class("etf"),
         lots=lots_payload,
-        sp500_close=args.sp500_close,
+        sp500_close=sp500_close,
     )
 
     print(f"OK — snapshot {snapshot_id} cargado con {len(lots_payload)} lotes.")

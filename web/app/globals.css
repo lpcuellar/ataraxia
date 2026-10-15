@@ -1,8 +1,40 @@
 @import "tailwindcss";
 
+/* Tokens de la skill dataviz (referencias/palette.md) — modo claro, que es el que
+   pidió LP (las referencias que mando son dashboards SaaS claros, no oscuros).
+   Paleta categorica validada con scripts/validate_palette.js antes de usarla. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+
+  --surface-1: #fcfcfb; /* superficie de card/chart */
+  --page-plane: #f9f9f7; /* fondo de pagina, un paso atras de la superficie */
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781; /* ejes, etiquetas secundarias */
+  --gridline: #e1e0d9; /* hairline, nunca punteada */
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+
+  --success-text: #006300;
+
+  /* Paleta categorica (orden fijo, nunca ciclada) */
+  --series-1: #2a78d6; /* azul — Ataraxia / foco principal */
+  --series-2: #eb6834; /* naranja */
+  --series-3: #1baf7a; /* aqua */
+  --series-4: #eda100; /* amarillo */
+  --series-5: #e87ba4; /* magenta */
+  --series-6: #008300; /* verde */
+  --series-7: #4a3aa7; /* violeta */
+  --series-8: #e34948; /* rojo */
+
+  /* Status (fijo, nunca reusado como serie) */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+
+  --background: var(--page-plane);
+  --foreground: var(--text-primary);
 }
 
 @theme inline {
@@ -12,15 +44,7 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
 }

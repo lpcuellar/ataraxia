@@ -15,36 +15,56 @@ export default function PositionsTable({ positions }: { positions: PositionRow[]
   const etfs = positions.filter((p) => p.assetClass !== "equity");
 
   const row = (p: PositionRow, showWeights: boolean) => (
-    <tr key={p.ticker} className="border-b border-zinc-800 last:border-0">
-      <td className="py-2 pr-3 font-medium">{p.ticker}</td>
-      <td className="py-2 pr-3 text-right">
-        {showWeights ? fmtPct(p.weightAtCost) : <span className="text-zinc-600">n/a</span>}
-        {showWeights && p.weightAtCost > MAX_POSITION_PCT && (
-          <span className="ml-1 text-amber-400" title={`Excede el tope de ${fmtPct(MAX_POSITION_PCT)} al costo`}>
-            ⚠
-          </span>
+    <tr key={p.ticker} className="border-b last:border-0" style={{ borderColor: "var(--gridline)" }}>
+      <td className="py-2.5 pr-3 font-medium" style={{ color: "var(--text-primary)" }}>
+        {p.ticker}
+      </td>
+      <td className="py-2.5 pr-3 text-right tabular-nums" style={{ color: "var(--text-primary)" }}>
+        {showWeights ? (
+          <>
+            {fmtPct(p.weightAtCost)}
+            {p.weightAtCost > MAX_POSITION_PCT && (
+              <span
+                className="ml-1"
+                style={{ color: "var(--status-warning)" }}
+                title={`Excede el tope de ${fmtPct(MAX_POSITION_PCT)} al costo`}
+              >
+                ⚠
+              </span>
+            )}
+          </>
+        ) : (
+          <span style={{ color: "var(--text-muted)" }}>n/a</span>
         )}
       </td>
-      <td className="py-2 pr-3 text-right">
-        {showWeights ? fmtPct(p.weightAtMarket) : <span className="text-zinc-600">n/a</span>}
+      <td className="py-2.5 pr-3 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+        {showWeights ? fmtPct(p.weightAtMarket) : <span style={{ color: "var(--text-muted)" }}>n/a</span>}
       </td>
-      <td className="py-2 pr-3 text-right tabular-nums">{p.quantity.toFixed(4)}</td>
-      <td className="py-2 pr-3 text-right tabular-nums">${p.avgCost.toFixed(2)}</td>
-      <td className="py-2 pr-3 text-right tabular-nums">
+      <td className="py-2.5 pr-3 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+        {p.quantity.toFixed(4)}
+      </td>
+      <td className="py-2.5 pr-3 text-right tabular-nums" style={{ color: "var(--text-secondary)" }}>
+        ${p.avgCost.toFixed(2)}
+      </td>
+      <td className="py-2.5 pr-3 text-right tabular-nums" style={{ color: "var(--text-primary)" }}>
         {p.price !== null ? `$${p.price.toFixed(2)}` : "—"}
       </td>
       <td
-        className={`py-2 pr-3 text-right tabular-nums ${
-          p.gainPct >= 0 ? "text-emerald-400" : "text-red-400"
-        }`}
+        className="py-2.5 pr-3 text-right tabular-nums font-medium"
+        style={{ color: p.gainPct >= 0 ? "var(--success-text)" : "var(--status-critical)" }}
       >
         {p.gainPct >= 0 ? "+" : ""}
         {(p.gainPct * 100).toFixed(1)}%
       </td>
-      <td className="py-2 pr-3 text-right tabular-nums">{fmtUsd(p.marketValue)}</td>
-      <td className="py-2">
+      <td className="py-2.5 pr-3 text-right tabular-nums" style={{ color: "var(--text-primary)" }}>
+        {fmtUsd(p.marketValue)}
+      </td>
+      <td className="py-2.5">
         {p.needsThesisReview && (
-          <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-400">
+          <span
+            className="rounded-md px-1.5 py-0.5 text-xs font-medium"
+            style={{ background: "#fce8e4", color: "var(--status-critical)" }}
+          >
             revisión obligatoria
           </span>
         )}
@@ -54,7 +74,10 @@ export default function PositionsTable({ positions }: { positions: PositionRow[]
 
   const head = (
     <thead>
-      <tr className="border-b border-zinc-700 text-left text-xs uppercase text-zinc-500">
+      <tr
+        className="border-b text-left text-xs font-medium uppercase tracking-wide"
+        style={{ borderColor: "var(--baseline)", color: "var(--text-muted)" }}
+      >
         <th className="py-2 pr-3">Ticker</th>
         <th className="py-2 pr-3 text-right">% costo</th>
         <th className="py-2 pr-3 text-right">% mercado</th>
@@ -71,7 +94,7 @@ export default function PositionsTable({ positions }: { positions: PositionRow[]
   return (
     <div className="flex flex-col gap-6">
       <div className="overflow-x-auto">
-        <p className="mb-2 text-xs text-zinc-500">
+        <p className="mb-2 text-xs" style={{ color: "var(--text-muted)" }}>
           Acciones — % costo es el peso sobre el tope de concentración ({fmtPct(MAX_POSITION_PCT)});
           % mercado es informativo, no bloquea nada.
         </p>
@@ -82,7 +105,7 @@ export default function PositionsTable({ positions }: { positions: PositionRow[]
       </div>
       {etfs.length > 0 && (
         <div className="overflow-x-auto">
-          <p className="mb-2 text-xs text-zinc-500">
+          <p className="mb-2 text-xs" style={{ color: "var(--text-muted)" }}>
             ETFs — ancla pasiva fuera del mandato, no cuentan para el tope de concentración.
           </p>
           <table className="w-full text-sm">

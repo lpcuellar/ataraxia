@@ -1,22 +1,38 @@
 "use client";
 
-import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { PositionRow } from "@/lib/metrics";
 
-const COLORS = [
-  "#34d399",
-  "#60a5fa",
-  "#f59e0b",
-  "#f472b6",
-  "#a78bfa",
-  "#fb7185",
-  "#22d3ee",
-  "#a3e635",
-  "#fbbf24",
-  "#818cf8",
-  "#4ade80",
-  "#e879f9",
-];
+// Un ticker no tiene mas "identidad categorica" frente a otro que lo justifique: son
+// categorias nominales sin orden natural, asi que un color por barra (uno de 12 del
+// catalogo) seria el anti-patron "value-ramp sobre categorias nominales"
+// (references/anti-patterns.md) — double-encodea el largo de la barra como color sin
+// agregar informacion. Un solo color (slot 1) para todas las barras es lo correcto.
+const BAR_COLOR = "#2a78d6"; // --series-1
+const GRID = "#e1e0d9";
+const MUTED = "#898781";
+
+function CustomTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: { payload: { ticker: string; pct: number } }[];
+}) {
+  if (!active || !payload?.length) return null;
+  const { ticker, pct } = payload[0].payload;
+  return (
+    <div
+      className="rounded-lg border px-3 py-2 text-xs shadow-sm"
+      style={{ borderColor: "var(--border)", background: "var(--surface-1)" }}
+    >
+      <span className="font-semibold tabular-nums" style={{ color: "var(--text-primary)" }}>
+        {pct}%
+      </span>{" "}
+      <span style={{ color: "var(--text-muted)" }}>{ticker}</span>
+    </div>
+  );
+}
 
 export default function DistributionChart({ positions }: { positions: PositionRow[] }) {
   const equities = positions
@@ -24,37 +40,38 @@ export default function DistributionChart({ positions }: { positions: PositionRo
     .map((p) => ({ ticker: p.ticker, pct: Number((p.weightAtCost * 100).toFixed(1)) }));
 
   if (equities.length === 0) {
-    return <p className="text-sm text-zinc-500">Sin acciones en el snapshot.</p>;
+    return (
+      <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+        Sin acciones en el snapshot.
+      </p>
+    );
   }
 
   return (
     <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={equities} layout="vertical" margin={{ left: 8, right: 24 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={false} />
+        <BarChart data={equities} layout="vertical" margin={{ left: 8, right: 24 }} barCategoryGap={2}>
+          <CartesianGrid strokeDasharray="0" stroke={GRID} horizontal={false} />
           <XAxis
             type="number"
-            stroke="#71717a"
-            fontSize={12}
+            stroke={MUTED}
+            tick={{ fill: MUTED, fontSize: 12 }}
+            axisLine={{ stroke: GRID }}
+            tickLine={false}
             tickFormatter={(v) => `${v}%`}
           />
           <YAxis
             type="category"
             dataKey="ticker"
-            stroke="#71717a"
-            fontSize={12}
+            stroke={MUTED}
+            tick={{ fill: MUTED, fontSize: 12 }}
+            axisLine={false}
+            tickLine={false}
             width={56}
           />
-          <Tooltip
-            contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }}
-            labelStyle={{ color: "#e4e4e7" }}
-            formatter={(value) => `${value}%`}
-          />
-          <Bar dataKey="pct" radius={[0, 4, 4, 0]}>
-            {equities.map((_, i) => (
-              <Cell key={i} fill={COLORS[i % COLORS.length]} />
-            ))}
-          </Bar>
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: "var(--page-plane)" }} />
+          {/* <=24px de grosor y extremo redondeado de datos (references/marks-and-anatomy.md) */}
+          <Bar dataKey="pct" fill={BAR_COLOR} radius={[0, 4, 4, 0]} maxBarSize={20} />
         </BarChart>
       </ResponsiveContainer>
     </div>

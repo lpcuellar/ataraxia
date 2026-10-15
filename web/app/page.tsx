@@ -18,6 +18,27 @@ import { logout } from "./login/actions";
 // siempre fresco, no un blog estatico.
 export const instant = false;
 
+function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <section
+      className="rounded-xl border p-5"
+      style={{ borderColor: "var(--border)", background: "var(--surface-1)" }}
+    >
+      <div className="mb-4">
+        <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          {title}
+        </h2>
+        {subtitle && (
+          <p className="mt-0.5 text-xs" style={{ color: "var(--text-muted)" }}>
+            {subtitle}
+          </p>
+        )}
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export default async function DashboardPage() {
   const [snapshots, equityAggregates, recommendations] = await Promise.all([
     getSnapshotHistory(),
@@ -31,57 +52,48 @@ export default async function DashboardPage() {
   const series = buildPerformanceSeries(snapshots, equityAggregates);
   const { positions } = buildPositions(lots);
   const risk = computeRiskMetrics(series);
-  const latestPoint = series[series.length - 1];
 
   return (
-    <main className="mx-auto flex max-w-5xl flex-col gap-10 px-4 py-10">
+    <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-10">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Ataraxia</h1>
-          <p className="text-sm text-zinc-500">
+          <h1 className="text-lg font-semibold" style={{ color: "var(--text-primary)" }}>
+            Ataraxia
+          </h1>
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
             {latestSnapshot
               ? `Snapshot al ${latestSnapshot.as_of}`
               : "Sin snapshots cargados todavía"}
           </p>
         </div>
         <form action={logout}>
-          <button className="text-sm text-zinc-500 hover:text-zinc-300" type="submit">
+          <button
+            className="rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors"
+            style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+            type="submit"
+          >
             Salir
           </button>
         </form>
       </header>
 
-      <section>
-        <MetricsCards latest={latestPoint} risk={risk} />
-      </section>
+      <MetricsCards series={series} risk={risk} />
 
-      <section>
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-500">
-          Retorno de equities vs. S&P 500
-        </h2>
+      <Card title="Retorno de equities vs. S&P 500">
         <PerformanceChart series={series} />
-      </section>
+      </Card>
 
-      <section>
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-500">
-          Distribución del portafolio (acciones, al costo)
-        </h2>
+      <Card title="Distribución del portafolio" subtitle="Acciones, al costo">
         <DistributionChart positions={positions} />
-      </section>
+      </Card>
 
-      <section>
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-500">
-          Posiciones
-        </h2>
+      <Card title="Posiciones">
         <PositionsTable positions={positions} />
-      </section>
+      </Card>
 
-      <section>
-        <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-zinc-500">
-          Bitácora de recomendaciones
-        </h2>
+      <Card title="Bitácora de recomendaciones">
         <RecommendationsTable recommendations={recommendations} />
-      </section>
+      </Card>
     </main>
   );
 }

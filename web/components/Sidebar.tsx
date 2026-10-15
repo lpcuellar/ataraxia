@@ -7,6 +7,7 @@ import { logout } from "@/app/login/actions";
 const NAV = [
   { href: "/", label: "Overview" },
   { href: "/positions", label: "Posiciones" },
+  { href: "/watchlist", label: "Watchlist" },
   { href: "/recommendations", label: "Recomendaciones" },
 ];
 

@@ -129,3 +129,44 @@ export async function getCashEvents(): Promise<
     order by date asc
   `;
 }
+
+export type WatchlistRow = {
+  id: number;
+  ticker: string;
+  company_name: string | null;
+  moat_type: string | null;
+  moat_evidence: string | null;
+  moat_direction: string | null;
+  attacker_case: string | null;
+  attacker_probability: string | null;
+  thesis_summary: string;
+  target_price: string | null;
+  what_needs_to_happen: string;
+  price_at_entry: string | null;
+  status: string;
+  added_at: string;
+  last_reviewed_at: string | null;
+};
+
+/** Watchlist activa (status='esperando') por defecto — candidatas que ya pasaron el
+ * negocio pero todavia esperan precio. status=null trae todo, incluidas compradas y
+ * descartadas, para el historial completo. */
+export async function getWatchlist(status: string | null = "esperando"): Promise<WatchlistRow[]> {
+  if (status === null) {
+    return sql<WatchlistRow[]>`
+      select id, ticker, company_name, moat_type, moat_evidence, moat_direction,
+             attacker_case, attacker_probability, thesis_summary, target_price,
+             what_needs_to_happen, price_at_entry, status, added_at, last_reviewed_at
+      from watchlist
+      order by added_at desc
+    `;
+  }
+  return sql<WatchlistRow[]>`
+    select id, ticker, company_name, moat_type, moat_evidence, moat_direction,
+           attacker_case, attacker_probability, thesis_summary, target_price,
+           what_needs_to_happen, price_at_entry, status, added_at, last_reviewed_at
+    from watchlist
+    where status = ${status}
+    order by ticker
+  `;
+}

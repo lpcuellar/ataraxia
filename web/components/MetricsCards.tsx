@@ -116,7 +116,7 @@ export default function MetricsCards({
     : null;
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
       <Tile
         label="Valor equities"
         value={fmtUsd(latest.equityMarketValue)}

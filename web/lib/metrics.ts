@@ -61,16 +61,39 @@ export function buildPerformanceSeries(
   });
 
   const base = withEquityData[0];
-  const baseAgg = base ? aggregates.get(base.id) : undefined;
-  const baseValue = baseAgg?.value ?? 0;
   const baseSp500 = base?.sp500_close ? Number(base.sp500_close) : null;
+
+  // Retorno ponderado por tiempo (TWR), no "valor hoy / valor del primer punto - 1".
+  // Con el backfill de transacciones historicas (LP 2026-10-14) hay depositos reales
+  // entre snapshots — meter capital nuevo no es "rendimiento". Ejemplo real de este
+  // dataset: el primer punto con una accion individual (24-jun-2025) tenia 1 accion de
+  // OXY (~$44); para hoy el retorno naive daba +15,262% porque todo el capital agregado
+  // despues se contaba como si esos $44 se hubieran multiplicado. El costo de las
+  // equities (equityCostBasis) solo cambia por compra/venta real, nunca por el precio de
+  // mercado — asi que su variacion entre dos snapshots consecutivos ES el aporte neto de
+  // ese periodo, y se descuenta antes de medir el retorno real del periodo:
+  //   r_i = (V_i - V_{i-1} - aporte_i) / V_{i-1}
+  // Los retornos de cada periodo se encadenan (producto de (1+r_i)), no se suman.
+  let cumulative = 1;
+  let prevValue: number | null = null;
+  let prevCost: number | null = null;
 
   return withEquityData.map((snap) => {
     const agg = aggregates.get(snap.id) ?? { cost: 0, value: 0 };
-    const cumulativeReturnPct = baseValue ? (agg.value - baseValue) / baseValue : 0;
+
+    if (prevValue !== null && prevCost !== null && prevValue > 0) {
+      const netContribution = agg.cost - prevCost;
+      const periodReturn = (agg.value - prevValue - netContribution) / prevValue;
+      cumulative *= 1 + periodReturn;
+    }
+    prevValue = agg.value;
+    prevCost = agg.cost;
+    const cumulativeReturnPct = cumulative - 1;
 
     let sp500ReturnPct: number | null = null;
     if (baseSp500 && snap.sp500_close) {
+      // El S&P 500 no recibe aportes de LP — su retorno simple desde la base es correcto
+      // sin ajuste de TWR, porque no hay flujo de capital que distorsione la medicion.
       sp500ReturnPct = (Number(snap.sp500_close) - baseSp500) / baseSp500;
     }
 
@@ -170,7 +193,25 @@ export type RiskMetrics = {
   insufficientHistoryForSharpe: boolean;
 };
 
-/** Drawdown maximo y Sharpe sobre la serie de valor de mercado de equities. Sharpe asume
+/** Retorno de cada periodo, descontando el aporte neto (igual criterio TWR que
+ * buildPerformanceSeries) — sin esto, un deposito entre dos snapshots se ve identico a
+ * una ganancia de mercado, e infla tanto el drawdown como la volatilidad del Sharpe. */
+function periodReturns(series: PerformancePoint[]): number[] {
+  const returns: number[] = [];
+  for (let i = 1; i < series.length; i++) {
+    const prev = series[i - 1];
+    if (!prev.equityMarketValue) continue;
+    const netContribution = series[i].equityCostBasis - prev.equityCostBasis;
+    returns.push(
+      (series[i].equityMarketValue - prev.equityMarketValue - netContribution) / prev.equityMarketValue
+    );
+  }
+  return returns;
+}
+
+/** Drawdown maximo y Sharpe sobre el indice de retorno TWR (crece de 1.0 encadenando los
+ * retornos de periodReturns), no sobre el valor en dolares crudo — el valor en dolares
+ * sube con cada deposito nuevo, y eso no es "un nuevo pico" de performance. Sharpe asume
  * tasa libre de riesgo 0% — igual simplificacion que src/reporting/performance.py, aceptable
  * mientras el historico sea corto pero NO para juzgar la estrategia contra bonos a largo
  * plazo. Revisar cuando haya suficiente historico para que la comparacion importe. */
@@ -179,11 +220,15 @@ export function computeRiskMetrics(series: PerformancePoint[]): RiskMetrics {
     return { maxDrawdownPct: null, sharpeRatio: null, insufficientHistoryForSharpe: true };
   }
 
-  let peak = series[0].equityMarketValue;
+  const returns = periodReturns(series);
+
+  let index = 1;
+  let peak = 1;
   let maxDrawdown = 0;
-  for (const point of series) {
-    if (point.equityMarketValue > peak) peak = point.equityMarketValue;
-    const drawdown = peak ? (point.equityMarketValue - peak) / peak : 0;
+  for (const r of returns) {
+    index *= 1 + r;
+    if (index > peak) peak = index;
+    const drawdown = (index - peak) / peak;
     if (drawdown < maxDrawdown) maxDrawdown = drawdown;
   }
 
@@ -191,12 +236,6 @@ export function computeRiskMetrics(series: PerformancePoint[]): RiskMetrics {
     return { maxDrawdownPct: maxDrawdown, sharpeRatio: null, insufficientHistoryForSharpe: true };
   }
 
-  const returns: number[] = [];
-  for (let i = 1; i < series.length; i++) {
-    const prev = series[i - 1].equityMarketValue;
-    if (!prev) continue;
-    returns.push((series[i].equityMarketValue - prev) / prev);
-  }
   const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
   const variance =
     returns.reduce((a, r) => a + (r - mean) ** 2, 0) / Math.max(1, returns.length - 1);

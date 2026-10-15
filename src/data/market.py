@@ -144,6 +144,40 @@ def get_sp500_close_on(as_of: str) -> float | None:
     return result["close"]
 
 
+def get_ticker_close_on(ticker: str, as_of: str, lookback_days: int = 5) -> float | None:
+    """Cierre historico de CUALQUIER ticker en una fecha dada, via yfinance — para
+    reconstruir snapshots historicos de portafolio a partir de transacciones (scripts/
+    backfill_historical_snapshots.py). FMP esta bloqueado para tickers individuales (ver
+    docstring del modulo), asi que yfinance es la unica fuente, no un fallback.
+
+    Si as_of cae en fin de semana o feriado (frecuente: las fechas de deposito de Schwab
+    no siempre son dias habiles), busca hacia atras hasta lookback_days el ultimo cierre
+    disponible — nunca hacia adelante, para no usar un precio que todavia no existia en
+    esa fecha."""
+    from datetime import date, timedelta
+
+    def fetch():
+        import warnings
+
+        import yfinance as yf
+
+        target = date.fromisoformat(as_of)
+        start = target - timedelta(days=lookback_days)
+        end = target + timedelta(days=1)  # end exclusivo en yfinance
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                hist = yf.Ticker(ticker).history(start=start.isoformat(), end=end.isoformat())
+            if hist.empty:
+                return {"close": None}
+            return {"close": float(hist["Close"].iloc[-1])}
+        except Exception:
+            return {"close": None}
+
+    result = cached_call("ticker_close_on", {"ticker": ticker.upper(), "as_of": as_of}, fetch)
+    return result["close"]
+
+
 def get_sp500_return(start_date: str, end_date: str) -> float:
     """Retorno porcentual del S&P 500 entre dos fechas. Falla explicitamente (en vez de
     devolver 0.0) si no hay suficientes datos, para no ensuciar la metrica de alpha con un

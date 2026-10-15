@@ -64,10 +64,27 @@ function cutoffFor(range: Range): Date | null {
 function rebase(points: PerformancePoint[]): PerformancePoint[] {
   if (points.length === 0) return points;
   const base = points[0];
-  const baseEquity = base.equityMarketValue;
   const baseSp500 = base.sp500Close;
+
+  // Mismo TWR que lib/metrics.ts buildPerformanceSeries, por la misma razon: un deposito
+  // real entre dos puntos del rango filtrado no es rendimiento. equityCostBasis solo se
+  // mueve por compra/venta real, nunca por precio de mercado, asi que su variacion entre
+  // puntos consecutivos es el aporte neto de ese tramo y se descuenta antes de medir el
+  // retorno — encadenado, no sumado.
+  let cumulative = 1;
+  let prevValue: number | null = null;
+  let prevCost: number | null = null;
+
   return points.map((p) => {
-    const cumulativeReturnPct = baseEquity ? (p.equityMarketValue - baseEquity) / baseEquity : 0;
+    if (prevValue !== null && prevCost !== null && prevValue > 0) {
+      const netContribution = p.equityCostBasis - prevCost;
+      const periodReturn = (p.equityMarketValue - prevValue - netContribution) / prevValue;
+      cumulative *= 1 + periodReturn;
+    }
+    prevValue = p.equityMarketValue;
+    prevCost = p.equityCostBasis;
+    const cumulativeReturnPct = cumulative - 1;
+
     const sp500ReturnPct =
       baseSp500 && p.sp500Close !== null ? (p.sp500Close - baseSp500) / baseSp500 : null;
     return {

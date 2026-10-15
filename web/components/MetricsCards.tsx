@@ -111,8 +111,13 @@ export default function MetricsCards({
     );
   }
 
+  // Igual que buildPerformanceSeries (lib/metrics.ts): un deposito entre el snapshot
+  // anterior y el actual no es rendimiento. Se descuenta el aporte neto (variacion de
+  // equityCostBasis, que solo se mueve por compra/venta real) antes de medir el % de
+  // cambio — si no, meter capital nuevo se veria identico a una ganancia de mercado.
   const valueDeltaPct = previous && previous.equityMarketValue
-    ? (latest.equityMarketValue - previous.equityMarketValue) / previous.equityMarketValue
+    ? (latest.equityMarketValue - previous.equityMarketValue -
+        (latest.equityCostBasis - previous.equityCostBasis)) / previous.equityMarketValue
     : null;
 
   return (

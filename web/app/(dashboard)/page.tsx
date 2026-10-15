@@ -40,9 +40,7 @@ export default async function OverviewPage() {
       <MetricsCards series={series} risk={risk} />
 
       <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
-        <Card title="Portafolio vs. S&P 500" subtitle="Retorno acumulado desde el primer snapshot">
-          <PerformanceChart series={series} />
-        </Card>
+        <PerformanceChart series={series} />
         <Card title="Distribución" subtitle="Acciones, al costo">
           <DistributionChart positions={positions} />
         </Card>

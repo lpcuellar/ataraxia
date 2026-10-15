@@ -48,12 +48,24 @@ export function buildPerformanceSeries(
   const aggregates = equityAggregatesBySnapshot(equityAggregateRows);
   const ordered = [...snapshots].sort((a, b) => a.as_of.localeCompare(b.as_of));
 
-  const base = ordered[0];
+  // Los snapshots cargados antes de la migracion de portfolio_lots (20261011180000) no
+  // tienen detalle de lotes — solo el agregado total, no el desglose equity/ETF que esta
+  // funcion necesita. Sin filtrarlos, ese snapshot aparece con equityMarketValue=0, que si
+  // cae como base hace que el retorno de TODOS los puntos salga 0% (la guarda
+  // 'baseValue ? ... : 0' protege division por cero pero tambien enmascara el bug, porque
+  // se evalua para cada punto, no solo el primero). Se usa como base el primer snapshot que
+  // de verdad tiene lotes de equities, no ordered[0] a ciegas.
+  const withEquityData = ordered.filter((snap) => {
+    const agg = aggregates.get(snap.id);
+    return agg !== undefined && agg.value > 0;
+  });
+
+  const base = withEquityData[0];
   const baseAgg = base ? aggregates.get(base.id) : undefined;
   const baseValue = baseAgg?.value ?? 0;
   const baseSp500 = base?.sp500_close ? Number(base.sp500_close) : null;
 
-  return ordered.map((snap) => {
+  return withEquityData.map((snap) => {
     const agg = aggregates.get(snap.id) ?? { cost: 0, value: 0 };
     const cumulativeReturnPct = baseValue ? (agg.value - baseValue) / baseValue : 0;
 

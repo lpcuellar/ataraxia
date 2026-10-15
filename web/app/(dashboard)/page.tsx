@@ -1,7 +1,7 @@
 import { getEquityAggregatesBySnapshot, getLotsForSnapshot, getSnapshotHistory } from "@/lib/db";
 import { buildPerformanceSeries, buildPositions, computeRiskMetrics } from "@/lib/metrics";
 import MetricsCards from "@/components/MetricsCards";
-import IndexedPerformanceChart from "@/components/IndexedPerformanceChart";
+import PerformanceChart from "@/components/PerformanceChart";
 import DistributionChart from "@/components/DistributionChart";
 import Card from "@/components/Card";
 
@@ -40,8 +40,8 @@ export default async function OverviewPage() {
       <MetricsCards series={series} risk={risk} />
 
       <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
-        <Card title="Portafolio vs. S&P 500" subtitle="Indexado a 100 en el primer snapshot">
-          <IndexedPerformanceChart series={series} />
+        <Card title="Portafolio vs. S&P 500" subtitle="Retorno acumulado desde el primer snapshot">
+          <PerformanceChart series={series} />
         </Card>
         <Card title="Distribución" subtitle="Acciones, al costo">
           <DistributionChart positions={positions} />

@@ -40,7 +40,8 @@ function CustomTooltip({
         <div key={p.name} className="flex items-center gap-2">
           <span className="inline-block h-0.5 w-3" style={{ background: p.color }} />
           <span className="font-semibold tabular-nums" style={{ color: "var(--text-primary)" }}>
-            {p.value.toFixed(1)}
+            {p.value >= 0 ? "+" : ""}
+            {p.value.toFixed(2)}%
           </span>
           <span style={{ color: "var(--text-muted)" }}>{p.name}</span>
         </div>
@@ -49,14 +50,15 @@ function CustomTooltip({
   );
 }
 
-/** Portafolio y S&P 500 en UNA sola linea de tiempo, indexados a 100 en el primer
- * snapshot (decision de LP 2026-10-14: prefiere esto a dos graficos separados, aun
- * sabiendo que dos ejes de escala real -dolares vs. puntos de indice- hubiera sido el
- * anti-patron de doble eje). Indexar a una base comun es la forma correcta de poner dos
- * series de distinta unidad en un solo eje (references/anti-patterns.md, alternativa #1
- * al dual-axis) — ambas arrancan en 100 y se leen como "cuanto creció cada una desde
- * ahi", sin inventar una correlacion por la alineacion arbitraria de dos ejes. */
-export default function IndexedPerformanceChart({ series }: { series: PerformancePoint[] }) {
+/** Portafolio y S&P 500 en UNA sola linea de tiempo, como % de retorno acumulado desde
+ * el primer snapshot (decision de LP 2026-10-14: un solo grafico — no dos separados por
+ * escala real, no indexado a 100 — directamente el rendimiento porcentual, que es lo que
+ * se compara contra el benchmark). Poner las dos series en un eje compartido de %
+ * (en vez de dolares vs. puntos de indice) es la forma correcta de un solo eje
+ * (references/anti-patterns.md, alternativa al dual-axis): ambas arrancan en 0% y se leen
+ * como "cuanto crecio cada una desde ahi", sin inventar una correlacion por la alineacion
+ * arbitraria de dos ejes de unidades distintas. */
+export default function PerformanceChart({ series }: { series: PerformancePoint[] }) {
   if (series.length < 2) {
     return (
       <p className="text-sm" style={{ color: "var(--text-muted)" }}>
@@ -68,8 +70,8 @@ export default function IndexedPerformanceChart({ series }: { series: Performanc
 
   const data = series.map((p) => ({
     asOf: p.asOf,
-    Portafolio: Number((100 * (1 + p.cumulativeReturnPct)).toFixed(2)),
-    "S&P 500": p.sp500ReturnPct !== null ? Number((100 * (1 + p.sp500ReturnPct)).toFixed(2)) : null,
+    Portafolio: Number((p.cumulativeReturnPct * 100).toFixed(2)),
+    "S&P 500": p.sp500ReturnPct !== null ? Number((p.sp500ReturnPct * 100).toFixed(2)) : null,
   }));
 
   return (
@@ -89,6 +91,7 @@ export default function IndexedPerformanceChart({ series }: { series: Performanc
             tick={{ fill: CONTEXT, fontSize: 12 }}
             axisLine={false}
             tickLine={false}
+            tickFormatter={(v) => `${v}%`}
             domain={["auto", "auto"]}
             width={48}
           />

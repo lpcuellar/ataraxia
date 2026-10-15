@@ -32,7 +32,7 @@ export default function Sidebar() {
                 className="rounded-lg px-2.5 py-2 text-sm font-medium transition-colors"
                 style={{
                   color: active ? "var(--series-1)" : "var(--text-secondary)",
-                  background: active ? "#e5eefb" : "transparent",
+                  background: active ? "rgba(57, 135, 229, 0.15)" : "transparent",
                 }}
               >
                 {item.label}

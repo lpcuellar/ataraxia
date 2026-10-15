@@ -10,7 +10,11 @@ export default function Card({
   return (
     <section
       className="rounded-xl border p-5"
-      style={{ borderColor: "var(--border)", background: "var(--surface-1)" }}
+      style={{
+        borderColor: "var(--border)",
+        background: "var(--surface-1)",
+        boxShadow: "var(--shadow-elevation)",
+      }}
     >
       <div className="mb-4">
         <h2 className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>

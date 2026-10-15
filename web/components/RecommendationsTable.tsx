@@ -3,18 +3,20 @@ import type { RecommendationRow } from "@/lib/db";
 // Convencion de dominio (compra=verde, vender=rojo) sobre los tokens de status fijos de
 // references/palette.md — no una paleta categorica nueva por veredicto. mantener/
 // esperar_precio quedan neutros porque no son ni una señal de entrada ni de salida.
+// Fondos en rgba translucido sobre el color de texto (en vez de un pastel solido fijo):
+// funciona igual de bien en claro y oscuro sin mantener dos tablas de hex por tema.
 const VERDICT_STYLE: Record<string, { bg: string; fg: string }> = {
-  compra: { bg: "#e3f6e3", fg: "var(--status-good)" },
-  agregar_watchlist: { bg: "#e5eefb", fg: "var(--series-1)" },
-  mantener: { bg: "#f1f0ec", fg: "var(--text-secondary)" },
-  esperar_precio: { bg: "#f1f0ec", fg: "var(--text-secondary)" },
-  vender: { bg: "#fce8e4", fg: "var(--status-critical)" },
-  recortar: { bg: "#fdf0e0", fg: "var(--status-serious)" },
-  descartar: { bg: "#f1f0ec", fg: "var(--text-muted)" },
+  compra: { bg: "rgba(12, 163, 12, 0.15)", fg: "var(--status-good)" },
+  agregar_watchlist: { bg: "rgba(57, 135, 229, 0.15)", fg: "var(--series-1)" },
+  mantener: { bg: "var(--surface-raised)", fg: "var(--text-secondary)" },
+  esperar_precio: { bg: "var(--surface-raised)", fg: "var(--text-secondary)" },
+  vender: { bg: "rgba(208, 59, 59, 0.15)", fg: "var(--status-critical)" },
+  recortar: { bg: "rgba(236, 131, 90, 0.15)", fg: "var(--status-serious)" },
+  descartar: { bg: "var(--surface-raised)", fg: "var(--text-muted)" },
 };
 
 function VerdictBadge({ verdict }: { verdict: string }) {
-  const style = VERDICT_STYLE[verdict] ?? { bg: "#f1f0ec", fg: "var(--text-secondary)" };
+  const style = VERDICT_STYLE[verdict] ?? { bg: "var(--surface-raised)", fg: "var(--text-secondary)" };
   return (
     <span
       className="whitespace-nowrap rounded-md px-1.5 py-0.5 text-xs font-medium"

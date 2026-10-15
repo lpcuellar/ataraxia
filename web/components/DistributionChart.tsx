@@ -8,9 +8,9 @@ import type { PositionRow } from "@/lib/metrics";
 // catalogo) seria el anti-patron "value-ramp sobre categorias nominales"
 // (references/anti-patterns.md) — double-encodea el largo de la barra como color sin
 // agregar informacion. Un solo color (slot 1) para todas las barras es lo correcto.
-const BAR_COLOR = "#2a78d6"; // --series-1
-const GRID = "#e1e0d9";
-const MUTED = "#898781";
+const BAR_COLOR = "#3987e5"; // --series-1 dark
+const GRID = "#2c2c2a"; // --gridline dark
+const MUTED = "#898781"; // --text-muted (mismo valor en los dos modos)
 
 function CustomTooltip({
   active,

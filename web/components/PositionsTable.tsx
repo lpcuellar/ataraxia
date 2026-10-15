@@ -63,7 +63,7 @@ export default function PositionsTable({ positions }: { positions: PositionRow[]
         {p.needsThesisReview && (
           <span
             className="rounded-md px-1.5 py-0.5 text-xs font-medium"
-            style={{ background: "#fce8e4", color: "var(--status-critical)" }}
+            style={{ background: "rgba(208, 59, 59, 0.15)", color: "var(--status-critical)" }}
           >
             revisión obligatoria
           </span>
